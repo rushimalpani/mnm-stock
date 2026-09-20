@@ -20,6 +20,8 @@ def search(
     colour: Optional[str] = None,
     size: Optional[str] = None,
     stock_status: Optional[str] = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=50),
 ):
     return search_service.search_stock(
         q,
@@ -31,6 +33,8 @@ def search(
         colour=colour,
         size=size,
         stock_status=stock_status,
+        page=page,
+        page_size=page_size,
     )
 
 

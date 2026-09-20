@@ -62,6 +62,9 @@ export type SearchResponse = {
   report_id?: number | null;
   colour_message?: string | null;
   count: number;
+  page?: number;
+  page_size?: number;
+  total_pages?: number;
   results: SearchGroup[];
 };
 

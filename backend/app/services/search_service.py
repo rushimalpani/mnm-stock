@@ -45,10 +45,14 @@ def search_stock(
     colour: Optional[str] = None,
     size: Optional[str] = None,
     stock_status: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 10,
 ) -> dict[str, Any]:
     q_norm = normalize_for_search(query)
     colour_filter = colour or None
     query_tokens = q_norm.split() if q_norm else []
+    page = max(1, int(page or 1))
+    page_size = min(50, max(1, int(page_size or 10)))
 
     with db_session() as conn:
         effective_report_id = report_id
@@ -215,12 +219,22 @@ def search_stock(
     results = list(groups.values())
     results.sort(key=lambda g: (g.get("design_number") or "", g.get("design_name") or ""))
 
+    total = len(results)
+    total_pages = max(1, (total + page_size - 1) // page_size) if total else 1
+    if page > total_pages:
+        page = total_pages
+    start = (page - 1) * page_size
+    page_results = results[start : start + page_size]
+
     return {
         "query": query,
         "report_id": effective_report_id,
         "colour_message": colour_missing_message,
-        "count": len(results),
-        "results": results,
+        "count": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+        "results": page_results,
     }
 
 

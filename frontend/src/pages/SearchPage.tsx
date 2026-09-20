@@ -11,6 +11,8 @@ import {
 } from '../api';
 import { SourceModal } from '../components/SourceModal';
 
+const PAGE_SIZE = 10;
+
 export function SearchPage() {
   const [q, setQ] = useState('');
   const [category, setCategory] = useState('');
@@ -23,6 +25,7 @@ export function SearchPage() {
   const [showMoreFilters, setShowMoreFilters] = useState(false);
   const [colour, setColour] = useState('');
   const [stockStatus, setStockStatus] = useState('');
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     api.reports().then((r) => setReports(r.reports.filter((x) => x.status === 'imported')));
@@ -38,15 +41,32 @@ export function SearchPage() {
       category: category || undefined,
       colour: colour || undefined,
       stock_status: stockStatus || undefined,
+      page,
+      page_size: PAGE_SIZE,
     };
-  }, [q, category, reportId, colour, stockStatus]);
+  }, [q, category, reportId, colour, stockStatus, page]);
 
-  async function runSearch(e?: React.FormEvent) {
+  async function runSearch(e?: React.FormEvent, nextPage = page) {
     e?.preventDefault();
     setLoading(true);
     setError(null);
     try {
-      setData(await api.search(queryParams));
+      const rid =
+        reportId && reportId !== 'latest' && reportId !== 'all' ? Number(reportId) : undefined;
+      const res = await api.search({
+        q,
+        latest: reportId === 'latest',
+        report_id: rid,
+        category: category || undefined,
+        colour: colour || undefined,
+        stock_status: stockStatus || undefined,
+        page: nextPage,
+        page_size: PAGE_SIZE,
+      });
+      setData(res);
+      if (res.page && res.page !== nextPage) {
+        setPage(res.page);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Search failed');
     } finally {
@@ -54,10 +74,29 @@ export function SearchPage() {
     }
   }
 
+  function searchFromStart(e?: React.FormEvent) {
+    e?.preventDefault();
+    setPage(1);
+    void runSearch(undefined, 1);
+  }
+
   useEffect(() => {
-    void runSearch();
+    void runSearch(undefined, 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const totalPages = data?.total_pages ?? 1;
+  const totalCount = data?.count ?? 0;
+  const currentPage = data?.page ?? page;
+  const from = totalCount === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1;
+  const to = Math.min(currentPage * PAGE_SIZE, totalCount);
+
+  function goToPage(p: number) {
+    const next = Math.min(Math.max(1, p), totalPages);
+    setPage(next);
+    void runSearch(undefined, next);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -70,7 +109,7 @@ export function SearchPage() {
           Example: <strong>131</strong> or <strong>Digital Print</strong>.
         </p>
 
-        <form onSubmit={runSearch} className="mt-4 space-y-3 sm:mt-5 sm:space-y-4">
+        <form onSubmit={searchFromStart} className="mt-4 space-y-3 sm:mt-5 sm:space-y-4">
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
@@ -100,7 +139,10 @@ export function SearchPage() {
               <button
                 key={c.id || 'all'}
                 type="button"
-                onClick={() => setCategory(c.id)}
+                onClick={() => {
+                  setCategory(c.id);
+                  setPage(1);
+                }}
                 className={`shrink-0 rounded-full px-4 py-2.5 text-sm sm:text-base ${
                   category === c.id
                     ? 'bg-[var(--accent)] text-white'
@@ -117,7 +159,10 @@ export function SearchPage() {
             <select
               className="min-h-12 w-full rounded-xl border border-[var(--line)] bg-white px-3 py-3"
               value={reportId}
-              onChange={(e) => setReportId(e.target.value)}
+              onChange={(e) => {
+                setReportId(e.target.value);
+                setPage(1);
+              }}
             >
               <option value="all">All reports</option>
               <option value="latest">Only latest report</option>
@@ -164,7 +209,7 @@ export function SearchPage() {
               <div className="flex flex-col gap-2 sm:col-span-2 sm:flex-row">
                 <button
                   type="button"
-                  onClick={() => void runSearch()}
+                  onClick={() => searchFromStart()}
                   className="min-h-12 rounded-xl bg-[var(--accent)] px-4 py-3 text-white"
                 >
                   Apply
@@ -191,9 +236,16 @@ export function SearchPage() {
       )}
 
       <section className="space-y-3 sm:space-y-4">
-        <h2 className="font-[family-name:var(--font-display)] text-2xl sm:text-3xl">
-          Results {data ? `(${data.count})` : ''}
-        </h2>
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <h2 className="font-[family-name:var(--font-display)] text-2xl sm:text-3xl">
+            Results {data ? `(${totalCount})` : ''}
+          </h2>
+          {totalCount > 0 && (
+            <p className="text-sm text-[var(--muted)] sm:text-base">
+              Showing {from}–{to} of {totalCount}
+            </p>
+          )}
+        </div>
 
         {!data?.results?.length && !loading && (
           <div className="rounded-2xl border border-dashed border-[var(--line)] bg-white/70 px-4 py-8 text-center sm:rounded-3xl sm:px-5 sm:py-10">
@@ -223,6 +275,33 @@ export function SearchPage() {
         {data?.results.map((group) => (
           <DesignCard key={`${group.product_id}-${group.design_number}`} group={group} onSource={setSourceId} />
         ))}
+
+        {totalCount > PAGE_SIZE && (
+          <nav
+            className="flex flex-col items-stretch gap-3 rounded-2xl border border-[var(--line)] bg-white p-3 sm:flex-row sm:items-center sm:justify-between sm:rounded-3xl sm:px-4 sm:py-3"
+            aria-label="Results pages"
+          >
+            <button
+              type="button"
+              disabled={loading || currentPage <= 1}
+              onClick={() => goToPage(currentPage - 1)}
+              className="min-h-12 rounded-xl border border-[var(--line)] bg-[var(--paper)] px-4 py-3 text-base font-semibold disabled:opacity-40"
+            >
+              ← Previous
+            </button>
+            <p className="text-center text-base font-medium">
+              Page <strong>{currentPage}</strong> of <strong>{totalPages}</strong>
+            </p>
+            <button
+              type="button"
+              disabled={loading || currentPage >= totalPages}
+              onClick={() => goToPage(currentPage + 1)}
+              className="min-h-12 rounded-xl bg-[var(--accent)] px-4 py-3 text-base font-semibold text-white disabled:opacity-40"
+            >
+              Next →
+            </button>
+          </nav>
+        )}
       </section>
 
       {sourceId !== null && <SourceModal snapshotId={sourceId} onClose={() => setSourceId(null)} />}
@@ -265,14 +344,12 @@ function DesignCard({
         </div>
       </div>
 
-      {/* Mobile: stacked cards */}
       <div className="space-y-2 p-3 md:hidden">
         {group.variants.map((v) => (
           <VariantMobileCard key={v.snapshot_id} v={v} onSource={onSource} />
         ))}
       </div>
 
-      {/* Desktop: Colour | Purchase | Available | MRP */}
       <div className="hidden overflow-x-auto md:block">
         <table className="min-w-full text-left text-base">
           <thead className="bg-white text-[var(--muted)]">

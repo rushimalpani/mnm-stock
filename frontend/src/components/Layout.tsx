@@ -18,11 +18,20 @@ export function Layout() {
     <div className="min-h-dvh pb-[calc(var(--nav-h)+env(safe-area-inset-bottom))] md:pb-0">
       <header className="safe-top sticky top-0 z-20 border-b border-[var(--line)] bg-white/95 backdrop-blur-md">
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-3 py-3 sm:px-4">
-          <div className="min-w-0">
-            <p className="font-[family-name:var(--font-display)] text-xl leading-none sm:text-2xl">
-              MNM Stock
-            </p>
-            <p className="mt-1 truncate text-xs text-[var(--muted)] sm:text-sm">Find stock easily</p>
+          <div className="flex min-w-0 items-center gap-2.5">
+            <img
+              src="/logo-512.png"
+              alt=""
+              width={40}
+              height={40}
+              className="h-10 w-10 shrink-0 rounded-full bg-white object-contain ring-1 ring-[var(--line)]"
+            />
+            <div className="min-w-0">
+              <p className="font-[family-name:var(--font-display)] text-xl leading-none sm:text-2xl">
+                MNM Stock
+              </p>
+              <p className="mt-1 truncate text-xs text-[var(--muted)] sm:text-sm">Find stock easily</p>
+            </div>
           </div>
           <nav className="hidden flex-wrap justify-end gap-1 md:flex">
             <NavLink to="/" end className={desktopLink}>
