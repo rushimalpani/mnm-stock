@@ -194,13 +194,9 @@ def search_stock(
         design_number = r.get("design_number")
         item_code = r.get("item_code")
 
-        # Fashion: group colours/sizes under one design.
-        # Jewellery: PDF often lists the same style code twice with different item codes
-        # (e.g. 1685 → 200467021 and 200467122) — keep each SKU as its own result.
-        if category == "jewellery" and item_code:
-            key = f"jewellery::{design_number or ''}::{item_code}"
-        else:
-            key = f"{category}::{design_number or r.get('product_id')}"
+        # Fashion: one card per design (all colours/sizes).
+        # Jewellery: one card per style code (all item codes as rows) — same as before.
+        key = f"{category}::{design_number or r.get('product_id')}"
 
         item_key = (
             f"{key}::"
@@ -227,9 +223,8 @@ def search_stock(
         }
 
         display_name = r.get("original_name")
-        if category == "jewellery" and item_code:
-            base = display_name or design_number or "Jewellery"
-            display_name = f"{base} · {item_code}"
+        if category == "jewellery" and design_number and not display_name:
+            display_name = design_number
 
         if key not in groups:
             groups[key] = {

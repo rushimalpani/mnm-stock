@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, formatMoney, formatQty, type PreviewResponse } from '../api';
+import { api, formatMoney, formatQty, stockQtyClass, type PreviewResponse } from '../api';
 
 export function UploadPage() {
   const [dragging, setDragging] = useState(false);
@@ -161,7 +161,7 @@ export function UploadPage() {
                     <p className="text-xs text-[var(--muted)]">Purchase</p>
                     <p className="text-lg font-semibold">{formatQty(row.purchase_qty as number | null)}</p>
                     <p className="mt-1 text-xs text-[var(--muted)]">Available</p>
-                    <p className="text-2xl font-bold text-[var(--accent)]">
+                    <p className={stockQtyClass(row.stock_qty as number | null, 'text-2xl font-bold')}>
                       {formatQty(row.stock_qty as number | null)}
                     </p>
                     <p className="text-sm">{formatMoney(row.mrp as number | null)}</p>
@@ -197,7 +197,7 @@ export function UploadPage() {
                     <td className="px-3 py-3 text-lg font-semibold">
                       {formatQty(row.purchase_qty as number | null)}
                     </td>
-                    <td className="px-3 py-3 text-lg font-bold text-[var(--accent)]">
+                    <td className={stockQtyClass(row.stock_qty as number | null, 'px-3 py-3 text-lg font-bold')}>
                       {formatQty(row.stock_qty as number | null)}
                     </td>
                     <td className="px-3 py-3">{formatMoney(row.mrp as number | null)}</td>

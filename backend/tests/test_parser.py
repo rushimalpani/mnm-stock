@@ -115,6 +115,94 @@ def test_bottle_green_multiline():
     assert meta["colour"] == "Bottle Green"
 
 
+def test_split_fashion_design_prefix_anchor():
+    """PDF often splits '577-3' + 'Piece-Women-Free' — must still start a product row."""
+    from app.services.pdf_rows import _is_product_anchor, extract_rows_from_words
+
+    assert _is_product_anchor("577-3", ["577-3", "Piece-Women-Free"])
+    assert not _is_product_anchor("93-1", ["93-1"])  # lone jewellery wrap code
+
+    words = [
+        {"text": "Supplier", "x0": 20, "top": 40},
+        {"text": "577-3", "x0": 20, "top": 100},
+        {"text": "Piece-Women-Free", "x0": 55, "top": 100},
+        {"text": "size-free", "x0": 140, "top": 100},
+        {"text": "size-5-2.25--White-1", "x0": 20, "top": 112},
+        {"text": "200471009", "x0": 200, "top": 100},
+        {"text": "2", "x0": 300, "top": 100},
+        {"text": "1000", "x0": 340, "top": 100},
+        {"text": "2000", "x0": 380, "top": 100},
+        {"text": "2", "x0": 420, "top": 100},
+        {"text": "0", "x0": 460, "top": 100},
+        {"text": "3150", "x0": 500, "top": 100},
+        {"text": "6300", "x0": 540, "top": 100},
+    ]
+    rows = extract_rows_from_words(words, page_number=165)
+    assert len(rows) == 1
+    assert rows[0].product_name.startswith("577-3")
+    assert "White" in rows[0].product_name
+    assert rows[0].item_code == "200471009"
+    assert rows[0].stock_qty == 2.0
+    assert rows[0].mrp == 3150.0
+
+    meta = parse_fashion_product_name(rows[0].product_name)
+    assert meta["design_number"] == "577"
+    assert meta["colour"] == "White"
+
+
+def test_fashion_and_jewellery_parsers_stay_separate():
+    """Fashion colour rules must not apply to jewellery; wrap-merge is jewellery-only."""
+    from app.services.parsers import _row_category
+    from app.services.parsers.base import ParsedRow
+    from app.services.pdf_rows import RawTableRow
+    from app.services.parsers import _raw_table_to_parsed
+
+    assert _row_category("577-3 Piece-Women-Free--White-1", "unknown") == "fashion"
+    assert _row_category("1501-Jewellery-Women------27-16", "fashion") == "jewellery"
+    assert _row_category("1501--------41-1657-1", "fashion") == "jewellery"
+
+    fashion_row = RawTableRow(
+        product_name="577-3 Piece-Women-Free size-free size-5-2.25--Purple-1",
+        item_code="200471010",
+        purchase_qty=4,
+        purchase_rate=1000,
+        purchase_amount=4000,
+        stock_qty=4,
+        difference=0,
+        mrp=3150,
+        stock_amount=12600,
+        pdf_page=162,
+        secondary_label="93-1",  # must be ignored for fashion
+    )
+    parsed_f = _raw_table_to_parsed(
+        fashion_row, supplier="Bandhani", report_date="19/09/2026", category="fashion"
+    )
+    assert parsed_f.category == "fashion"
+    assert parsed_f.design_number == "577"
+    assert parsed_f.colour == "Purple"
+    assert "1693" not in (parsed_f.original_product_text or "")
+
+    jew_row = RawTableRow(
+        product_name="1501-Jewellery-Women------27-16",
+        item_code="200467010",
+        purchase_qty=1,
+        purchase_rate=310,
+        purchase_amount=310,
+        stock_qty=1,
+        difference=0,
+        mrp=620,
+        stock_amount=620,
+        pdf_page=1,
+        secondary_label="93-1",
+    )
+    parsed_j = _raw_table_to_parsed(
+        jew_row, supplier="KM", report_date="19/09/2026", category="jewellery"
+    )
+    assert parsed_j.category == "jewellery"
+    assert parsed_j.design_number == "1693"
+    assert parsed_j.design_name == "1693-1"
+
+
 def test_jewellery_preserves_original():
     raw = "1501-Jewellery-Women------27-16"
     meta = parse_jewellery_product_name(raw, secondary="93-1")

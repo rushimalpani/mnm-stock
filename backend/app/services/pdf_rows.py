@@ -16,6 +16,8 @@ PRODUCT_RE = re.compile(r"^\d{2,}[-–].+")
 ITEM_CODE_RE = re.compile(r"^\d{6,}$")
 NUMBER_RE = re.compile(r"^-?\d+(?:,\d{3})*(?:\.\d+)?$")
 SECONDARY_RE = re.compile(r"^\d{1,4}-\d{1,4}$")
+# Fashion designs sometimes split as "577-3" + "Piece-Women-Free" across words
+DESIGN_PREFIX_RE = re.compile(r"^\d{2,}-\d{1,4}$")
 SUPPLIER_LINE_RE = re.compile(r"^(PADMAVATI|SELECTION|SUPPLIER|TOTAL|PAGE)$", re.I)
 
 
@@ -47,6 +49,17 @@ def _is_product_name(text: str) -> bool:
     if SECONDARY_RE.match(text):
         return False
     return True
+
+
+def _is_product_anchor(text: str, same_line_texts: list[str]) -> bool:
+    """True for a full product token, or a split design prefix like '577-3' + 'Piece-…'."""
+    if _is_product_name(text):
+        return True
+    if not DESIGN_PREFIX_RE.match(text):
+        return False
+    # Require alphabetic continuation on the same line (not a lone jewellery code like 93-1)
+    joined = " ".join(same_line_texts)
+    return bool(re.search(r"[A-Za-z]{3,}", joined))
 
 
 def _words_from_page(page: fitz.Page) -> list[dict]:
@@ -107,7 +120,18 @@ def extract_rows_from_words(words: list[dict], page_number: int) -> list[RawTabl
             header_y = w["top"]
             break
 
-    products = [w for w in words if _is_product_name(w["text"]) and w["x0"] < 120]
+    # Product anchors: full names, or split prefixes like "577-3" + "Piece-Women-Free"
+    products: list[dict] = []
+    for w in words:
+        if w["x0"] >= 120:
+            continue
+        same_line = [
+            x["text"]
+            for x in words
+            if x is not w and abs(x["top"] - w["top"]) <= 3 and w["x0"] < x["x0"] < 175
+        ]
+        if _is_product_anchor(w["text"], same_line):
+            products.append(w)
     products.sort(key=lambda w: w["top"])
     if not products:
         return []
@@ -116,8 +140,8 @@ def extract_rows_from_words(words: list[dict], page_number: int) -> list[RawTabl
     for idx, pw in enumerate(products):
         y0 = pw["top"] - 3
         # Keep band tight so supplier section headers are not merged into the row
-        next_y = products[idx + 1]["top"] - 2 if idx + 1 < len(products) else pw["top"] + 26
-        y1 = min(next_y, pw["top"] + 26)
+        next_y = products[idx + 1]["top"] - 2 if idx + 1 < len(products) else pw["top"] + 28
+        y1 = min(next_y, pw["top"] + 28)
 
         band = [
             w
@@ -139,9 +163,22 @@ def extract_rows_from_words(words: list[dict], page_number: int) -> list[RawTabl
                 item_code = t
                 continue
             if w["x0"] < 175:
-                if SECONDARY_RE.match(t) and left_parts:
-                    secondary = t
-                elif not ITEM_CODE_RE.match(t) and not NUMBER_RE.match(t.replace(",", "")):
+                # Split fashion start: "577-3" then "Piece-Women-Free…"
+                if DESIGN_PREFIX_RE.match(t) and not left_parts:
+                    left_parts.append(t)
+                    continue
+                # Jewellery wrap code on the next line (e.g. 93-1 under the name).
+                # Never treat this as fashion text — fashion uses '--Colour' continuations.
+                if SECONDARY_RE.match(t) and left_parts and abs(w["top"] - pw["top"]) > 8:
+                    joined = " ".join(left_parts).lower()
+                    if (
+                        "jewell" in joined
+                        or "jewelry" in joined
+                        or re.search(r"\d-{5,}\d", joined)
+                    ):
+                        secondary = t
+                    continue
+                if not ITEM_CODE_RE.match(t) and not NUMBER_RE.match(t.replace(",", "")):
                     left_parts.append(t)
                 continue
             cleaned = t.replace(",", "")

@@ -176,3 +176,13 @@ export function formatQty(value?: number | null) {
   if (value === null || value === undefined || Number.isNaN(value)) return '—';
   return Number(value).toLocaleString('en-IN');
 }
+
+/** Available stock under 2 pcs → red; otherwise teal accent. */
+export function stockQtyClass(value?: number | null, base = '') {
+  const n = Number(value);
+  const tone =
+    value !== null && value !== undefined && !Number.isNaN(n) && n < 2
+      ? 'text-[var(--danger)]'
+      : 'text-[var(--accent)]';
+  return base ? `${base} ${tone}` : tone;
+}

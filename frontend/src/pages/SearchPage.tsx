@@ -4,6 +4,7 @@ import {
   api,
   formatMoney,
   formatQty,
+  stockQtyClass,
   type Report,
   type SearchGroup,
   type SearchResponse,
@@ -286,7 +287,7 @@ export function SearchPage() {
 
         {data?.results.map((group) => (
           <DesignCard
-            key={`${group.category}-${group.design_number}-${group.variants[0]?.item_code ?? group.product_id}-${group.report_id ?? ''}`}
+            key={`${group.category}-${group.design_number}-${group.product_id}-${group.report_id ?? ''}`}
             group={group}
             onSource={setSourceId}
           />
@@ -353,7 +354,7 @@ function DesignCard({
           </div>
           <div className="rounded-xl bg-white/80 px-3 py-2">
             <p className="text-xs text-[var(--muted)] sm:text-sm">Available stock</p>
-            <p className="text-lg font-bold text-[var(--accent)] sm:text-xl">
+            <p className={stockQtyClass(group.total_stock, 'text-lg font-bold sm:text-xl')}>
               {formatQty(group.total_stock)} pcs
             </p>
           </div>
@@ -384,7 +385,7 @@ function DesignCard({
               <tr key={v.snapshot_id} className="border-t border-[var(--line)]">
                 <td className="px-5 py-3 font-semibold">{v.colour || '—'}</td>
                 <td className="px-5 py-3 text-lg font-semibold">{formatQty(v.purchase_qty)} pcs</td>
-                <td className="px-5 py-3 text-xl font-bold text-[var(--accent)]">
+                <td className={stockQtyClass(v.stock_qty, 'px-5 py-3 text-xl font-bold')}>
                   {formatQty(v.stock_qty)} pcs
                 </td>
                 <td className="px-5 py-3 text-lg">{formatMoney(v.mrp)}</td>
@@ -427,7 +428,7 @@ function VariantMobileCard({
           <p className="text-xs text-[var(--muted)]">Purchase</p>
           <p className="text-lg font-semibold">{formatQty(v.purchase_qty)} pcs</p>
           <p className="mt-1 text-xs text-[var(--muted)]">Available</p>
-          <p className="text-2xl font-bold text-[var(--accent)]">{formatQty(v.stock_qty)} pcs</p>
+          <p className={stockQtyClass(v.stock_qty, 'text-2xl font-bold')}>{formatQty(v.stock_qty)} pcs</p>
           <p className="text-base font-medium">{formatMoney(v.mrp)}</p>
         </div>
       </div>

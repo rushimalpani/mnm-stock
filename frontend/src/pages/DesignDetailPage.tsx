@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { api, formatMoney, formatQty } from '../api';
+import { api, formatMoney, formatQty, stockQtyClass } from '../api';
 import { SourceModal } from '../components/SourceModal';
 
 export function DesignDetailPage() {
@@ -53,7 +53,7 @@ export function DesignDetailPage() {
           </span>
           <span className="rounded-xl bg-[var(--paper)] px-3 py-2">
             <span className="block text-xs text-[var(--muted)]">Available stock</span>
-            <strong className="text-xl text-[var(--accent)]">
+            <strong className={stockQtyClass(data.total_stock as number, 'text-xl')}>
               {formatQty(data.total_stock as number)}
             </strong>
           </span>
@@ -78,7 +78,9 @@ export function DesignDetailPage() {
                 <p className="text-xs text-[var(--muted)]">Purchase</p>
                 <p className="text-lg font-semibold">{formatQty(v.purchase_qty as number)}</p>
                 <p className="mt-1 text-xs text-[var(--muted)]">Available</p>
-                <p className="text-3xl font-bold text-[var(--accent)]">{formatQty(v.stock_qty as number)}</p>
+                <p className={stockQtyClass(v.stock_qty as number, 'text-3xl font-bold')}>
+                  {formatQty(v.stock_qty as number)}
+                </p>
               </div>
             </div>
             <dl className="mt-3 grid grid-cols-2 gap-2 text-sm">
@@ -138,7 +140,7 @@ export function DesignDetailPage() {
                 <td className="px-3 py-2">{String(v.colour ?? '—')}</td>
                 <td className="px-3 py-2">{String(v.size ?? '—')}</td>
                 <td className="px-3 py-2 font-semibold">{formatQty(v.purchase_qty as number)}</td>
-                <td className="px-3 py-2 font-bold text-[var(--accent)]">
+                <td className={stockQtyClass(v.stock_qty as number, 'px-3 py-2 font-bold')}>
                   {formatQty(v.stock_qty as number)}
                 </td>
                 <td className="px-3 py-2">{formatMoney(v.mrp as number)}</td>

@@ -254,18 +254,8 @@ def parse_data_line(
         # leftover may include fragments
         pass
 
-    # Choose name parser
-    effective_category = category
-    if effective_category == "unknown":
-        if "jewell" in product_name.lower() or re.search(r"\d+-{3,}", product_name):
-            effective_category = "jewellery"
-        else:
-            effective_category = "fashion"
-    if effective_category == "mixed":
-        if "jewell" in product_name.lower() or re.search(r"\d+-{3,}", product_name):
-            effective_category = "jewellery"
-        else:
-            effective_category = "fashion"
+    # Choose name parser — same per-row rules as tabular path
+    effective_category = _row_category(product_name, category)
 
     if effective_category == "jewellery":
         meta = parse_jewellery_product_name(product_name)
@@ -389,6 +379,44 @@ def parse_pages(pages: list, filename: str = "") -> ParseResult:
     )
 
 
+def _row_category(product_name: str, report_category: str) -> str:
+    """Pick fashion vs jewellery parser per row — never mix the two rule sets."""
+    low = (product_name or "").lower()
+
+    # Jewellery is explicit in the product text
+    if "jewell" in low or "jewelry" in low:
+        return "jewellery"
+
+    # Fashion colour marker: --Purple / --Green Pista (letter after --)
+    if re.search(r"--[A-Za-z]{3,}", product_name or ""):
+        return "fashion"
+
+    if any(
+        token in low
+        for token in (
+            "free size",
+            "freesize",
+            "lehenga",
+            "bandhani",
+            "piece-women",
+            "-work-women",
+            "digital print",
+            "chaniya",
+            "polka",
+            "patola",
+        )
+    ):
+        return "fashion"
+
+    # Sparse jewellery lines: 1501--------41-1657-1 (many hyphens then a digit)
+    if re.search(r"\d-{5,}\d", product_name or ""):
+        return "jewellery"
+
+    if report_category in {"fashion", "jewellery"}:
+        return report_category
+    return "fashion"
+
+
 def _raw_table_to_parsed(
     raw,
     *,
@@ -396,36 +424,13 @@ def _raw_table_to_parsed(
     report_date: Optional[str],
     category: str,
 ) -> ParsedRow:
-    from app.services.parsers.jewellery import merge_wrapped_jewellery_name
-
     product_name = raw.product_name
-    if raw.secondary_label:
-        # Join PDF line-wrap mid-code: "...27-16" + "93-1" → "...27-1693-1"
-        product_name = merge_wrapped_jewellery_name(product_name, raw.secondary_label)
+    secondary = raw.secondary_label
+    effective = _row_category(product_name, category)
 
-    effective = category
-    low = product_name.lower()
-    # Fashion colour marker is '--Colour'; jewellery empty fields look like '------27'
-    has_fashion_colour = bool(re.search(r"--[A-Za-z]{3,}", product_name))
-    if (
-        has_fashion_colour
-        or "free size" in low
-        or "freesize" in low
-        or "-work-women" in low
-        or "lehenga" in low
-        or "bandhani" in low
-    ):
-        effective = "fashion"
-    elif "jewell" in low or "jewelry" in low:
-        effective = "jewellery"
-    elif effective in {"unknown", "mixed"}:
-        if re.search(r"\d+-{3,}\d", product_name):
-            effective = "jewellery"
-        else:
-            effective = "fashion"
-
+    # Wrap-merge (...27-16 + 93-1 → 1693) is jewellery-only
     if effective == "jewellery":
-        meta = parse_jewellery_product_name(product_name)
+        meta = parse_jewellery_product_name(product_name, secondary=secondary)
     else:
         meta = parse_fashion_product_name(product_name)
 
