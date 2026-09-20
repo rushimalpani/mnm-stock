@@ -7,7 +7,7 @@ Usage:
   RENDER_URL=https://your-api.onrender.com python scripts/keep_render_awake.py
 
 Prefer the GitHub Action (.github/workflows/keep-render-awake.yml)
-so this runs in the cloud every 5 minutes without your laptop.
+so this runs in the cloud every 1 and 5 minutes without your laptop.
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ import urllib.error
 import urllib.request
 
 DEFAULT_URL = os.environ.get("RENDER_URL", "").rstrip("/")
-INTERVAL_SEC = int(os.environ.get("KEEPALIVE_INTERVAL_SEC", "300"))  # 5 minutes
+INTERVAL_SEC = int(os.environ.get("KEEPALIVE_INTERVAL_SEC", "60"))  # 1 minute
 
 
 def ping(base_url: str) -> bool:

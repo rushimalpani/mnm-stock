@@ -1,12 +1,12 @@
-# Keeps the Render free-tier API awake by pinging /api/health every 5 minutes.
+# Keeps the Render free-tier API awake by pinging /api/health every 1 and 5 minutes.
 # No laptop needed — GitHub runs this for you.
 #
 # Setup (once):
-# 1. Deploy backend on Render and copy its URL, e.g. https://mnm-stock-api.onrender.com
+# 1. Deploy backend on Render and copy its URL, e.g. https://mnm-stock.onrender.com
 # 2. GitHub repo → Settings → Secrets and variables → Actions
 # 3. New repository secret:
 #      Name:  RENDER_URL
-#      Value: https://mnm-stock-api.onrender.com
+#      Value: https://mnm-stock.onrender.com
 # 4. Push this workflow (or enable Actions on the repo).
 #
 # Optional: Actions → Keep Render Awake → Run workflow (manual test)
@@ -15,7 +15,9 @@ name: Keep Render Awake
 
 on:
   schedule:
-    # Every 5 minutes (UTC). GitHub may delay a few minutes under load.
+    # Every 1 minute (UTC). GitHub may delay under load.
+    - cron: "* * * * *"
+    # Every 5 minutes (UTC) — backup if 1-min jobs are delayed/skipped.
     - cron: "*/5 * * * *"
   workflow_dispatch:
 

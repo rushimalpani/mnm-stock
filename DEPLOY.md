@@ -135,7 +135,7 @@ G. Checklist if something fails
 
 
 --------------------------------
-I. Keep Render awake (every 5 minutes)
+I. Keep Render awake (every 1 and 5 minutes)
 --------------------------------
 
 Render free services sleep after ~15 minutes idle. To keep the API up
@@ -148,9 +148,10 @@ automatically (no laptop needed):
 3. Push the repo (workflow file is already at `.github/workflows/keep-render-awake.yml`)
 4. **Actions** → **Keep Render Awake** → **Run workflow** once to test
 
-GitHub will then ping `/api/health` about every 5 minutes.
+GitHub will then ping `/api/health` about every **1 minute**, plus every **5 minutes**
+as a backup (scheduled jobs can lag under load).
 
-Optional local loop (only if your laptop stays on):
+Optional local loop (only if your laptop stays on) — default every 1 minute:
 
 ```bash
 python3 scripts/keep_render_awake.py --url https://YOUR-SERVICE.onrender.com
