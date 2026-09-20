@@ -40,8 +40,10 @@ def on_startup() -> None:
     init_db()
 
 
+@app.api_route("/", methods=["GET", "HEAD"])
 @app.get("/api/health")
 def health():
+    """Root also serves health so Render's default HEAD / check does not 404."""
     return {"status": "ok"}
 
 
