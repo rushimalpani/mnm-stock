@@ -145,7 +145,7 @@ def search_stock(
             )
             blob = design_blob(r)
 
-            # Pure design number (e.g. "131")
+            # Pure design number (e.g. "131" or jewellery "1693") — exact only
             if len(query_tokens) == 1 and query_tokens[0].isdigit():
                 return dn == query_tokens[0]
 

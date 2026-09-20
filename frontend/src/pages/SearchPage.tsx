@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   api,
@@ -26,6 +26,7 @@ export function SearchPage() {
   const [colour, setColour] = useState('');
   const [stockStatus, setStockStatus] = useState('');
   const [page, setPage] = useState(1);
+  const searchSeq = useRef(0);
 
   useEffect(() => {
     api.reports().then((r) => setReports(r.reports.filter((x) => x.status === 'imported')));
@@ -48,8 +49,11 @@ export function SearchPage() {
 
   async function runSearch(e?: React.FormEvent, nextPage = page) {
     e?.preventDefault();
+    const seq = ++searchSeq.current;
     setLoading(true);
     setError(null);
+    // Clear previous cards immediately so stale results cannot linger
+    setData(null);
     try {
       const rid =
         reportId && reportId !== 'latest' && reportId !== 'all' ? Number(reportId) : undefined;
@@ -63,14 +67,16 @@ export function SearchPage() {
         page: nextPage,
         page_size: PAGE_SIZE,
       });
+      if (seq !== searchSeq.current) return; // ignore outdated response
       setData(res);
       if (res.page && res.page !== nextPage) {
         setPage(res.page);
       }
     } catch (err) {
+      if (seq !== searchSeq.current) return;
       setError(err instanceof Error ? err.message : 'Search failed');
     } finally {
-      setLoading(false);
+      if (seq === searchSeq.current) setLoading(false);
     }
   }
 
@@ -272,8 +278,18 @@ export function SearchPage() {
           </div>
         )}
 
+        {loading && (
+          <p className="rounded-2xl border border-[var(--line)] bg-white/70 px-4 py-6 text-center text-[var(--muted)]">
+            Searching…
+          </p>
+        )}
+
         {data?.results.map((group) => (
-          <DesignCard key={`${group.product_id}-${group.design_number}`} group={group} onSource={setSourceId} />
+          <DesignCard
+            key={`${group.category}-${group.design_number}-${group.variants[0]?.item_code ?? group.product_id}-${group.report_id ?? ''}`}
+            group={group}
+            onSource={setSourceId}
+          />
         ))}
 
         {totalCount > PAGE_SIZE && (
