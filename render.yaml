@@ -1,0 +1,22 @@
+# Render Blueprint — backend API
+# Docs: https://render.com/docs/blueprint-spec
+#
+# After first deploy: add a Persistent Disk in the Dashboard
+#   Mount path: /data
+# Then set STOCK_DATA_DIR=/data (already in envVars below).
+
+services:
+  - type: web
+    name: mnm-stock-api
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    plan: free
+    envVars:
+      - key: STOCK_DATA_DIR
+        value: /data
+      - key: CORS_ORIGINS
+        value: "*"
+      - key: PYTHON_VERSION
+        value: "3.12.0"

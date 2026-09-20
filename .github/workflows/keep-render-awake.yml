@@ -1,0 +1,57 @@
+# Keeps the Render free-tier API awake by pinging /api/health every 5 minutes.
+# No laptop needed — GitHub runs this for you.
+#
+# Setup (once):
+# 1. Deploy backend on Render and copy its URL, e.g. https://mnm-stock-api.onrender.com
+# 2. GitHub repo → Settings → Secrets and variables → Actions
+# 3. New repository secret:
+#      Name:  RENDER_URL
+#      Value: https://mnm-stock-api.onrender.com
+# 4. Push this workflow (or enable Actions on the repo).
+#
+# Optional: Actions → Keep Render Awake → Run workflow (manual test)
+
+name: Keep Render Awake
+
+on:
+  schedule:
+    # Every 5 minutes (UTC). GitHub may delay a few minutes under load.
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Check RENDER_URL secret
+        env:
+          RENDER_URL: ${{ secrets.RENDER_URL }}
+        run: |
+          if [ -z "$RENDER_URL" ]; then
+            echo "Missing secret RENDER_URL."
+            echo "Add it under Repo → Settings → Secrets → Actions"
+            echo "Example: https://mnm-stock-api.onrender.com"
+            exit 1
+          fi
+          echo "Pinging ${RENDER_URL}/api/health"
+
+      - name: Ping Render health
+        env:
+          RENDER_URL: ${{ secrets.RENDER_URL }}
+        run: |
+          set -e
+          URL="${RENDER_URL%/}/api/health"
+          # Free tier cold start can be slow — retry a few times
+          for i in 1 2 3 4 5; do
+            echo "Attempt $i…"
+            if curl -fsS --max-time 90 "$URL"; then
+              echo
+              echo "Render is up."
+              exit 0
+            fi
+            echo "Retry in 10s…"
+            sleep 10
+          done
+          echo "All attempts failed (service may still be deploying)."
+          exit 1
