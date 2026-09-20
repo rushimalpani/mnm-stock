@@ -42,9 +42,34 @@ def _get_or_create_supplier(conn, name: Optional[str]) -> Optional[int]:
 def _get_or_create_product(conn, row: dict) -> int:
     design_number = row.get("design_number")
     category = row.get("category") or "unknown"
+    item_code = row.get("item_code")
     # Prefer stable design label (without colour/size) so variants share one product
     original = row.get("design_name") or row.get("original_product_text") or ""
     normalized = (row.get("design_name") or row.get("normalized_name") or "").lower()
+
+    # If this item code already exists in the same category, reuse that product
+    # (avoids duplicates when style-code parsing improves on re-import).
+    if item_code:
+        by_item = conn.execute(
+            """
+            SELECT p.id FROM variants v
+            JOIN products p ON p.id = v.product_id
+            WHERE v.item_code = ? AND p.category = ?
+            ORDER BY p.id DESC
+            LIMIT 1
+            """,
+            (item_code, category),
+        ).fetchone()
+        if by_item:
+            conn.execute(
+                """
+                UPDATE products
+                SET design_number = ?, original_name = ?, normalized_name = ?
+                WHERE id = ?
+                """,
+                (design_number, original, normalized, by_item["id"]),
+            )
+            return by_item["id"]
 
     if design_number:
         existing = conn.execute(
@@ -84,6 +109,28 @@ def _get_or_create_variant(conn, product_id: int, row: dict) -> int:
     colour = row.get("colour")
     size = row.get("size")
     original_variant = row.get("original_product_text") or ""
+
+    # Item code is the stable identity — reuse even if product text changed (e.g. wrap fix)
+    if item_code:
+        existing = conn.execute(
+            """
+            SELECT id FROM variants
+            WHERE product_id = ?
+              AND IFNULL(item_code, '') = ?
+            """,
+            (product_id, item_code),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                """
+                UPDATE variants
+                SET colour = ?, size = ?, original_variant_name = ?
+                WHERE id = ?
+                """,
+                (colour, size, original_variant, existing["id"]),
+            )
+            return existing["id"]
+
     existing = conn.execute(
         """
         SELECT id FROM variants

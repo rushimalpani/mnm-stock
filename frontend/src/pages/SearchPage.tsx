@@ -16,7 +16,7 @@ const PAGE_SIZE = 10;
 export function SearchPage() {
   const [q, setQ] = useState('');
   const [category, setCategory] = useState('');
-  const [reportId, setReportId] = useState('all');
+  const [reportId, setReportId] = useState('latest');
   const [reports, setReports] = useState<Report[]>([]);
   const [data, setData] = useState<SearchResponse | null>(null);
   const [loading, setLoading] = useState(false);

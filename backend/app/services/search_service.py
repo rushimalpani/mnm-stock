@@ -177,46 +177,110 @@ def search_stock(
         else:
             filtered = colour_matches
 
-    # Group by design number so all colours/sizes appear together
+    # Group by design number so all colours/sizes appear together.
+    # Dedupe same item across reports / re-imports (keep newest report snapshot).
     groups: dict[str, dict[str, Any]] = {}
+    seen_variant_keys: dict[str, tuple[int, int]] = {}  # group_key+item → (report_id, snapshot_id)
+
+    def _row_rank(r: dict) -> tuple:
+        return (
+            str(r.get("report_date") or ""),
+            int(r.get("report_id") or 0),
+            int(r.get("snapshot_id") or 0),
+        )
+
     for r in filtered:
-        key = f"{r.get('category') or 'unknown'}::{r.get('design_number') or r.get('product_id')}"
+        category = r.get("category") or "unknown"
+        design_number = r.get("design_number")
+        item_code = r.get("item_code")
+
+        # Fashion: group colours/sizes under one design.
+        # Jewellery: PDF often lists the same style code twice with different item codes
+        # (e.g. 1685 → 200467021 and 200467122) — keep each SKU as its own result.
+        if category == "jewellery" and item_code:
+            key = f"jewellery::{design_number or ''}::{item_code}"
+        else:
+            key = f"{category}::{design_number or r.get('product_id')}"
+
+        item_key = (
+            f"{key}::"
+            f"{item_code or r.get('variant_id')}::"
+            f"{r.get('colour') or ''}::{r.get('size') or ''}"
+        )
+        variant_payload = {
+            "variant_id": r["variant_id"],
+            "snapshot_id": r["snapshot_id"],
+            "colour": r.get("colour"),
+            "size": r.get("size"),
+            "stock_qty": r.get("stock_qty"),
+            "mrp": r.get("mrp"),
+            "item_code": item_code,
+            "purchase_qty": r.get("purchase_qty"),
+            "purchase_rate": r.get("purchase_rate"),
+            "purchase_amount": r.get("purchase_amount"),
+            "difference": r.get("difference"),
+            "stock_amount": r.get("stock_amount"),
+            "pdf_page": r.get("pdf_page"),
+            "original_product_text": r.get("original_product_text"),
+            "filename": r.get("filename"),
+            "report_date": r.get("report_date"),
+        }
+
+        display_name = r.get("original_name")
+        if category == "jewellery" and item_code:
+            base = display_name or design_number or "Jewellery"
+            display_name = f"{base} · {item_code}"
+
         if key not in groups:
             groups[key] = {
                 "product_id": r["product_id"],
-                "design_number": r.get("design_number"),
-                "design_name": r.get("original_name"),
-                "category": r.get("category"),
+                "design_number": design_number,
+                "design_name": display_name,
+                "category": category,
                 "supplier": r.get("supplier_name"),
                 "report_id": r.get("report_id"),
                 "report_date": r.get("report_date"),
                 "filename": r.get("filename"),
                 "variants": [],
                 "total_stock": 0.0,
+                "_variant_index": {},
             }
-        groups[key]["variants"].append(
-            {
-                "variant_id": r["variant_id"],
-                "snapshot_id": r["snapshot_id"],
-                "colour": r.get("colour"),
-                "size": r.get("size"),
-                "stock_qty": r.get("stock_qty"),
-                "mrp": r.get("mrp"),
-                "item_code": r.get("item_code"),
-                "purchase_qty": r.get("purchase_qty"),
-                "purchase_rate": r.get("purchase_rate"),
-                "purchase_amount": r.get("purchase_amount"),
-                "difference": r.get("difference"),
-                "stock_amount": r.get("stock_amount"),
-                "pdf_page": r.get("pdf_page"),
-                "original_product_text": r.get("original_product_text"),
-                "filename": r.get("filename"),
-                "report_date": r.get("report_date"),
-            }
-        )
+
+        prev = seen_variant_keys.get(item_key)
+        if prev is not None:
+            # Prefer newer report / newer snapshot; skip older duplicate
+            prev_report_id, prev_snapshot_id = prev
+            prev_row = next(
+                (x for x in filtered if x.get("snapshot_id") == prev_snapshot_id),
+                None,
+            )
+            if prev_row is not None and _row_rank(r) <= _row_rank(prev_row):
+                continue
+            # Replace older variant in group
+            idx = groups[key]["_variant_index"].get(item_key)
+            if idx is not None:
+                old = groups[key]["variants"][idx]
+                groups[key]["total_stock"] -= float(old.get("stock_qty") or 0)
+                groups[key]["variants"][idx] = variant_payload
+                groups[key]["total_stock"] += float(r.get("stock_qty") or 0)
+                seen_variant_keys[item_key] = (int(r.get("report_id") or 0), int(r["snapshot_id"]))
+                # Keep group metadata on the newest row
+                if _row_rank(r) >= _row_rank(prev_row or r):
+                    groups[key]["report_id"] = r.get("report_id")
+                    groups[key]["report_date"] = r.get("report_date")
+                    groups[key]["filename"] = r.get("filename")
+                    groups[key]["supplier"] = r.get("supplier_name")
+                continue
+
+        seen_variant_keys[item_key] = (int(r.get("report_id") or 0), int(r["snapshot_id"]))
+        groups[key]["_variant_index"][item_key] = len(groups[key]["variants"])
+        groups[key]["variants"].append(variant_payload)
         groups[key]["total_stock"] += float(r.get("stock_qty") or 0)
 
-    results = list(groups.values())
+    results = []
+    for g in groups.values():
+        g.pop("_variant_index", None)
+        results.append(g)
     results.sort(key=lambda g: (g.get("design_number") or "", g.get("design_name") or ""))
 
     total = len(results)
