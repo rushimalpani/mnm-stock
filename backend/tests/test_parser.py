@@ -230,3 +230,50 @@ def test_historical_reports_not_overwritten(fresh_db, tmp_path):
     reports = import_service.list_reports()
     imported = [r for r in reports if r["status"] == "imported"]
     assert len(imported) >= 2
+
+
+def test_same_filename_replaces_report(fresh_db, tmp_path):
+    """Re-uploading the same filename replaces stock + deletes the old PDF file."""
+    from app.database import db_session
+
+    uploads = import_service.UPLOADS_DIR
+    pdf1 = create_fashion_sample(tmp_path / "stock.pdf")
+    stored1 = import_service.save_upload(pdf1.read_bytes(), "Stock.pdf")
+    p1 = import_service.create_preview(stored1, "Stock.pdf")
+    assert p1["replaced"] is False
+    import_service.confirm_import(p1["report_id"], include_review_rows=True)
+    report_id = p1["report_id"]
+    assert stored1.exists()
+
+    pdf2 = create_fashion_sample(tmp_path / "stock2.pdf")
+    stored2 = import_service.save_upload(pdf2.read_bytes(), "stock.pdf")
+    p2 = import_service.create_preview(stored2, "stock.pdf")
+    assert p2["replaced"] is True
+    assert p2["report_id"] == report_id
+    assert p2["status"] == "preview"
+    assert not stored1.exists()
+    assert stored2.exists()
+
+    reports = [r for r in import_service.list_reports() if r["filename"].lower() == "stock.pdf"]
+    assert len(reports) == 1
+    assert reports[0]["status"] == "preview"
+
+    with db_session() as conn:
+        snaps = conn.execute(
+            "SELECT COUNT(*) AS c FROM stock_snapshots WHERE report_id = ?",
+            (report_id,),
+        ).fetchone()["c"]
+    assert snaps == 0
+
+    confirmed = import_service.confirm_import(report_id, include_review_rows=True)
+    assert confirmed["status"] == "imported"
+    assert confirmed["imported_rows"] >= 1
+
+    # Different filename still keeps a separate report
+    other = create_fashion_sample(tmp_path / "other.pdf")
+    stored3 = import_service.save_upload(other.read_bytes(), "other.pdf")
+    p3 = import_service.create_preview(stored3, "other.pdf")
+    assert p3["replaced"] is False
+    assert p3["report_id"] != report_id
+    assert len(import_service.list_reports()) >= 2
+    assert len(list(uploads.glob("*.pdf"))) >= 2

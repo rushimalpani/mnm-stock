@@ -103,6 +103,12 @@ export function UploadPage() {
           <p className="text-base text-[var(--muted)] sm:text-lg">
             Make sure the numbers look correct. Then tap Save.
           </p>
+          {preview.replaced && (
+            <p className="rounded-2xl border border-teal-200 bg-teal-50 px-4 py-3 text-base text-[var(--accent)]">
+              Updated existing report for this file name. Previous stock data and PDF for this file were
+              replaced.
+            </p>
+          )}
 
           <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
             <Meta label="File name" value={preview.filename} />

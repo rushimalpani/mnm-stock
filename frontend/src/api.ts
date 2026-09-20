@@ -79,6 +79,8 @@ export type PreviewResponse = {
   warnings: string[];
   sample_rows: Record<string, unknown>[];
   status: string;
+  /** True when this filename replaced a previous upload of the same name. */
+  replaced?: boolean;
 };
 
 export type Dashboard = {
