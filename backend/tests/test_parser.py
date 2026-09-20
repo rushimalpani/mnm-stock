@@ -117,15 +117,17 @@ def test_bottle_green_multiline():
 
 def test_jewellery_preserves_original():
     raw = "1501-Jewellery-Women------27-16"
-    meta = parse_jewellery_product_name(raw)
-    assert meta["original_product_text"] == raw
-    assert meta["design_number"] == "1501"
+    meta = parse_jewellery_product_name(raw, secondary="93-1")
+    assert meta["design_number"] == "1693"
+    assert meta["design_name"] == "1693-1"
+    assert meta["original_product_text"] == "1501-Jewellery-Women------27-1693-1"
     assert meta["category"] == "jewellery"
 
 
 def test_jewellery_sparse_name():
     meta = parse_jewellery_product_name("1501--------41-1657-1")
-    assert meta["design_number"] == "1501"
+    assert meta["design_number"] == "1657"
+    assert meta["design_name"] == "1657-1"
     assert "1501" in meta["original_product_text"]
 
 
@@ -195,14 +197,46 @@ def test_end_to_end_fashion_pdf(fresh_db, tmp_path):
     assert missing["colour_message"] == "No matching colour available in this report."
 
 
+def test_jewellery_style_code_is_search_key():
+    """Jewellery search key is 1693/1657, not series prefix 1501."""
+    from app.services.parsers.jewellery import parse_jewellery_product_name
+
+    a = parse_jewellery_product_name("1501-Jewellery-Women------1693-1")
+    assert a["design_number"] == "1693"
+    assert a["design_name"] == "1693-1"
+
+    b = parse_jewellery_product_name("1501--------41-1657-1")
+    assert b["design_number"] == "1657"
+    assert b["design_name"] == "1657-1"
+
+    # PDF wraps mid-number: line1 ends ...27-16 / line2 93-1 → 1693
+    c = parse_jewellery_product_name("1501-Jewellery-Women------27-16", secondary="93-1")
+    assert c["design_number"] == "1693"
+    assert c["design_name"] == "1693-1"
+    assert "1693-1" in c["original_product_text"]
+
+    d = parse_jewellery_product_name("1501-Jewellery-Women------27-16 93-1")
+    assert d["design_number"] == "1693"
+
+    e = parse_jewellery_product_name("1501-Jewellery-Women------100-1", secondary="685-1")
+    assert e["design_number"] == "1685"
+
+    f = parse_jewellery_product_name("1657-1")
+    assert f["design_number"] == "1657"
+
+
 def test_end_to_end_jewellery_pdf(fresh_db, tmp_path):
     pdf = create_jewellery_sample(tmp_path / "jewellery.pdf")
     result = parse_stock_pdf(pdf)
-    assert any(r.design_number == "1501" for r in result.rows)
+    assert any(r.design_number == "1657" for r in result.rows)
+    assert any(r.design_number == "27" for r in result.rows) or any(
+        r.design_number == "93" for r in result.rows
+    )
     preview = import_service.create_preview(pdf, "jewellery.pdf")
     import_service.confirm_import(preview["report_id"], include_review_rows=True)
-    search = search_service.search_stock("1501")
+    search = search_service.search_stock("1657", category="jewellery")
     assert search["count"] >= 1
+    assert search["results"][0]["design_number"] == "1657"
 
 
 def test_real_jewellery_pdf_layout():
@@ -213,11 +247,13 @@ def test_real_jewellery_pdf_layout():
         pytest.skip("No real jewellery upload present")
     result = parse_stock_pdf(matches[0])
     assert result.rows_parsed >= 50
-    assert any(r.design_number == "1501" for r in result.rows)
+    assert any(r.design_number == "1657" for r in result.rows)
     first = next(r for r in result.rows if r.item_code == "200467010")
     assert first.stock_qty == 1.0
     assert first.mrp == 620.0
     assert first.purchase_qty == 1.0
+    # First row style code is the trailing NN-1 (93), not series 1501
+    assert first.design_number != "1501"
 
 
 def test_historical_reports_not_overwritten(fresh_db, tmp_path):

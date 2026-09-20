@@ -39,9 +39,24 @@ export function DesignDetailPage() {
         <p className="mt-2 text-base text-[var(--muted)]">
           {[data.category, data.supplier, data.report_date].filter(Boolean).join(' · ')}
         </p>
-        <p className="mt-2 text-lg">
-          Total available:{' '}
-          <strong className="text-2xl text-[var(--accent)]">{formatQty(data.total_stock as number)}</strong>
+        <p className="mt-3 grid grid-cols-2 gap-2 sm:max-w-md">
+          <span className="rounded-xl bg-[var(--paper)] px-3 py-2">
+            <span className="block text-xs text-[var(--muted)]">Purchase stock</span>
+            <strong className="text-xl">
+              {formatQty(
+                ((data.variants as Record<string, unknown>[]) || []).reduce(
+                  (s, v) => s + Number(v.purchase_qty || 0),
+                  0,
+                ),
+              )}
+            </strong>
+          </span>
+          <span className="rounded-xl bg-[var(--paper)] px-3 py-2">
+            <span className="block text-xs text-[var(--muted)]">Available stock</span>
+            <strong className="text-xl text-[var(--accent)]">
+              {formatQty(data.total_stock as number)}
+            </strong>
+          </span>
         </p>
       </header>
 
@@ -60,7 +75,9 @@ export function DesignDetailPage() {
                 </p>
               </div>
               <div className="text-right">
-                <p className="text-sm text-[var(--muted)]">Available</p>
+                <p className="text-xs text-[var(--muted)]">Purchase</p>
+                <p className="text-lg font-semibold">{formatQty(v.purchase_qty as number)}</p>
+                <p className="mt-1 text-xs text-[var(--muted)]">Available</p>
                 <p className="text-3xl font-bold text-[var(--accent)]">{formatQty(v.stock_qty as number)}</p>
               </div>
             </div>
@@ -72,10 +89,6 @@ export function DesignDetailPage() {
               <div>
                 <dt className="text-[var(--muted)]">Item code</dt>
                 <dd className="font-mono text-xs">{String(v.item_code ?? '—')}</dd>
-              </div>
-              <div>
-                <dt className="text-[var(--muted)]">Purchase qty</dt>
-                <dd>{formatQty(v.purchase_qty as number)}</dd>
               </div>
               <div>
                 <dt className="text-[var(--muted)]">Purchase rate</dt>
@@ -108,10 +121,10 @@ export function DesignDetailPage() {
             <tr>
               <th className="px-3 py-2">Colour</th>
               <th className="px-3 py-2">Size</th>
-              <th className="px-3 py-2">Stock</th>
+              <th className="px-3 py-2">Purchase stock</th>
+              <th className="px-3 py-2">Available stock</th>
               <th className="px-3 py-2">MRP</th>
               <th className="px-3 py-2">Item Code</th>
-              <th className="px-3 py-2">Purchase Qty</th>
               <th className="px-3 py-2">Purchase Rate</th>
               <th className="px-3 py-2">Purchase Amount</th>
               <th className="px-3 py-2">Difference</th>
@@ -124,10 +137,12 @@ export function DesignDetailPage() {
               <tr key={String(v.id ?? v.snapshot_id)} className="border-t border-[var(--line)]">
                 <td className="px-3 py-2">{String(v.colour ?? '—')}</td>
                 <td className="px-3 py-2">{String(v.size ?? '—')}</td>
-                <td className="px-3 py-2 font-medium">{formatQty(v.stock_qty as number)}</td>
+                <td className="px-3 py-2 font-semibold">{formatQty(v.purchase_qty as number)}</td>
+                <td className="px-3 py-2 font-bold text-[var(--accent)]">
+                  {formatQty(v.stock_qty as number)}
+                </td>
                 <td className="px-3 py-2">{formatMoney(v.mrp as number)}</td>
                 <td className="px-3 py-2 font-mono text-xs">{String(v.item_code ?? '—')}</td>
-                <td className="px-3 py-2">{formatQty(v.purchase_qty as number)}</td>
                 <td className="px-3 py-2">{formatMoney(v.purchase_rate as number)}</td>
                 <td className="px-3 py-2">{formatMoney(v.purchase_amount as number)}</td>
                 <td className="px-3 py-2">{formatQty(v.difference as number)}</td>

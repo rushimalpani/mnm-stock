@@ -1,4 +1,5 @@
 import { NavLink, Outlet } from 'react-router-dom';
+import { InstallPrompt } from './InstallPrompt';
 
 const desktopLink = ({ isActive }: { isActive: boolean }) =>
   `px-3 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition ${
@@ -23,7 +24,6 @@ export function Layout() {
             </p>
             <p className="mt-1 truncate text-xs text-[var(--muted)] sm:text-sm">Find stock easily</p>
           </div>
-          {/* Desktop / tablet nav */}
           <nav className="hidden flex-wrap justify-end gap-1 md:flex">
             <NavLink to="/" end className={desktopLink}>
               Find Stock
@@ -42,10 +42,10 @@ export function Layout() {
       </header>
 
       <main className="mx-auto w-full max-w-5xl px-3 py-4 sm:px-4 sm:py-6">
+        <InstallPrompt />
         <Outlet />
       </main>
 
-      {/* Mobile bottom nav */}
       <nav className="safe-bottom fixed inset-x-0 bottom-0 z-30 border-t border-[var(--line)] bg-white/95 backdrop-blur-md md:hidden">
         <div className="mx-auto flex h-[var(--nav-h)] max-w-5xl">
           <NavLink to="/" end className={mobileLink}>

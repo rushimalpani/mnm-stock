@@ -74,7 +74,11 @@ export function SearchPage() {
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Design number or design name…"
+            placeholder={
+              category === 'jewellery'
+                ? 'Jewellery code e.g. 1693 or 1657…'
+                : 'Design number or design name…'
+            }
             className="w-full rounded-2xl border-2 border-[var(--line)] bg-[var(--paper)] px-4 py-3.5 text-lg outline-none focus:border-[var(--accent)] sm:px-5 sm:py-4 sm:text-xl"
             enterKeyHint="search"
             autoCapitalize="off"
@@ -193,10 +197,25 @@ export function SearchPage() {
 
         {!data?.results?.length && !loading && (
           <div className="rounded-2xl border border-dashed border-[var(--line)] bg-white/70 px-4 py-8 text-center sm:rounded-3xl sm:px-5 sm:py-10">
-            <p className="text-lg font-medium sm:text-xl">Nothing found yet</p>
+            <p className="text-lg font-medium sm:text-xl">
+              {q.trim() || category || colour || stockStatus
+                ? 'No matching stock'
+                : 'Nothing found yet'}
+            </p>
             <p className="mt-2 text-[var(--muted)]">
-              First go to <Link className="text-[var(--accent)] underline" to="/upload">Add PDF</Link> and
-              upload your stock report.
+              {reports.length === 0 ? (
+                <>
+                  First go to <Link className="text-[var(--accent)] underline" to="/upload">Add PDF</Link> and
+                  upload your stock report.
+                </>
+              ) : q.trim() ? (
+                <>
+                  No design matched <strong>{q.trim()}</strong>. For jewellery, search the style code (e.g.{' '}
+                  <strong>1657</strong>), tap <strong>Jewellery</strong>, and pick that report.
+                </>
+              ) : (
+                <>Try a design number, or choose Fashion / Jewellery above.</>
+              )}
             </p>
           </div>
         )}
@@ -218,6 +237,8 @@ function DesignCard({
   group: SearchGroup;
   onSource: (id: number) => void;
 }) {
+  const totalPurchase = group.variants.reduce((sum, v) => sum + Number(v.purchase_qty || 0), 0);
+
   return (
     <article className="overflow-hidden rounded-2xl border border-[var(--line)] bg-white shadow-sm sm:rounded-3xl">
       <div className="border-b border-[var(--line)] bg-[var(--paper)] px-4 py-3 sm:px-5 sm:py-4">
@@ -230,12 +251,18 @@ function DesignCard({
         >
           {group.design_name}
         </Link>
-        <p className="mt-2 text-base sm:text-lg">
-          Total Stock:{' '}
-          <strong className="text-xl text-[var(--accent)] sm:text-2xl">
-            {formatQty(group.total_stock)} pcs
-          </strong>
-        </p>
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:max-w-md">
+          <div className="rounded-xl bg-white/80 px-3 py-2">
+            <p className="text-xs text-[var(--muted)] sm:text-sm">Purchase stock</p>
+            <p className="text-lg font-bold sm:text-xl">{formatQty(totalPurchase)} pcs</p>
+          </div>
+          <div className="rounded-xl bg-white/80 px-3 py-2">
+            <p className="text-xs text-[var(--muted)] sm:text-sm">Available stock</p>
+            <p className="text-lg font-bold text-[var(--accent)] sm:text-xl">
+              {formatQty(group.total_stock)} pcs
+            </p>
+          </div>
+        </div>
       </div>
 
       {/* Mobile: stacked cards */}
@@ -245,13 +272,14 @@ function DesignCard({
         ))}
       </div>
 
-      {/* Desktop: Colour | Stock | MRP */}
+      {/* Desktop: Colour | Purchase | Available | MRP */}
       <div className="hidden overflow-x-auto md:block">
         <table className="min-w-full text-left text-base">
           <thead className="bg-white text-[var(--muted)]">
             <tr>
               <th className="px-5 py-3 font-semibold">Colour</th>
-              <th className="px-5 py-3 font-semibold">Stock</th>
+              <th className="px-5 py-3 font-semibold">Purchase stock</th>
+              <th className="px-5 py-3 font-semibold">Available stock</th>
               <th className="px-5 py-3 font-semibold">MRP</th>
               <th className="px-5 py-3 font-semibold">Size</th>
               <th className="px-5 py-3 font-semibold">Item code</th>
@@ -262,6 +290,7 @@ function DesignCard({
             {group.variants.map((v) => (
               <tr key={v.snapshot_id} className="border-t border-[var(--line)]">
                 <td className="px-5 py-3 font-semibold">{v.colour || '—'}</td>
+                <td className="px-5 py-3 text-lg font-semibold">{formatQty(v.purchase_qty)} pcs</td>
                 <td className="px-5 py-3 text-xl font-bold text-[var(--accent)]">
                   {formatQty(v.stock_qty)} pcs
                 </td>
@@ -301,8 +330,10 @@ function VariantMobileCard({
           <p className="text-lg font-semibold">{v.colour || '—'}</p>
           {v.size ? <p className="text-sm text-[var(--muted)]">Size: {v.size}</p> : null}
         </div>
-        <div className="text-right">
-          <p className="text-sm text-[var(--muted)]">Stock</p>
+        <div className="shrink-0 text-right">
+          <p className="text-xs text-[var(--muted)]">Purchase</p>
+          <p className="text-lg font-semibold">{formatQty(v.purchase_qty)} pcs</p>
+          <p className="mt-1 text-xs text-[var(--muted)]">Available</p>
           <p className="text-2xl font-bold text-[var(--accent)]">{formatQty(v.stock_qty)} pcs</p>
           <p className="text-base font-medium">{formatMoney(v.mrp)}</p>
         </div>

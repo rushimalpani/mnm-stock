@@ -158,6 +158,9 @@ export function UploadPage() {
                     <p className="font-mono text-xs text-[var(--muted)]">{String(row.item_code ?? '—')}</p>
                   </div>
                   <div className="text-right">
+                    <p className="text-xs text-[var(--muted)]">Purchase</p>
+                    <p className="text-lg font-semibold">{formatQty(row.purchase_qty as number | null)}</p>
+                    <p className="mt-1 text-xs text-[var(--muted)]">Available</p>
                     <p className="text-2xl font-bold text-[var(--accent)]">
                       {formatQty(row.stock_qty as number | null)}
                     </p>
@@ -178,6 +181,7 @@ export function UploadPage() {
                   <th className="px-3 py-3">Colour</th>
                   <th className="px-3 py-3">Size</th>
                   <th className="px-3 py-3">Item code</th>
+                  <th className="px-3 py-3">Purchase stock</th>
                   <th className="px-3 py-3">Available stock</th>
                   <th className="px-3 py-3">Price (MRP)</th>
                 </tr>
@@ -190,6 +194,9 @@ export function UploadPage() {
                     <td className="px-3 py-3">{String(row.colour ?? '—')}</td>
                     <td className="px-3 py-3">{String(row.size ?? '—')}</td>
                     <td className="px-3 py-3 font-mono text-sm">{String(row.item_code ?? '—')}</td>
+                    <td className="px-3 py-3 text-lg font-semibold">
+                      {formatQty(row.purchase_qty as number | null)}
+                    </td>
                     <td className="px-3 py-3 text-lg font-bold text-[var(--accent)]">
                       {formatQty(row.stock_qty as number | null)}
                     </td>

@@ -396,9 +396,12 @@ def _raw_table_to_parsed(
     report_date: Optional[str],
     category: str,
 ) -> ParsedRow:
+    from app.services.parsers.jewellery import merge_wrapped_jewellery_name
+
     product_name = raw.product_name
     if raw.secondary_label:
-        product_name = f"{product_name} {raw.secondary_label}"
+        # Join PDF line-wrap mid-code: "...27-16" + "93-1" → "...27-1693-1"
+        product_name = merge_wrapped_jewellery_name(product_name, raw.secondary_label)
 
     effective = category
     low = product_name.lower()
