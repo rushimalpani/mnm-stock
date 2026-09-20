@@ -1,4 +1,8 @@
-"""Extract stock rows from supplier PDFs using word positions (real report layout)."""
+"""Extract stock rows from supplier PDFs using word positions (real report layout).
+
+Uses PyMuPDF (fitz) instead of pdfplumber so large reports stay within Render
+free-tier memory (~512MB). pdfplumber word extraction on ~170 pages peaks near 1GB.
+"""
 from __future__ import annotations
 
 import re
@@ -6,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-import pdfplumber
+import pymupdf as fitz
 
 PRODUCT_RE = re.compile(r"^\d{2,}[-–].+")
 ITEM_CODE_RE = re.compile(r"^\d{6,}$")
@@ -43,6 +47,16 @@ def _is_product_name(text: str) -> bool:
     if SECONDARY_RE.match(text):
         return False
     return True
+
+
+def _words_from_page(page: fitz.Page) -> list[dict]:
+    """Normalize PyMuPDF word tuples to {text, x0, top} dicts."""
+    # (x0, y0, x1, y1, word, block, line, word_no)
+    return [
+        {"text": w[4], "x0": float(w[0]), "top": float(w[1])}
+        for w in page.get_text("words")
+        if w[4] and str(w[4]).strip()
+    ]
 
 
 def extract_supplier_from_words(words: list[dict]) -> Optional[str]:
@@ -82,8 +96,7 @@ def extract_date_from_words(words: list[dict]) -> Optional[str]:
     return None
 
 
-def extract_rows_from_page(page, page_number: int) -> list[RawTableRow]:
-    words = page.extract_words(use_text_flow=False, keep_blank_chars=False) or []
+def extract_rows_from_words(words: list[dict], page_number: int) -> list[RawTableRow]:
     if not words:
         return []
 
@@ -186,21 +199,33 @@ def extract_rows_from_page(page, page_number: int) -> list[RawTableRow]:
     return rows
 
 
+def extract_rows_from_page(page, page_number: int) -> list[RawTableRow]:
+    """Backward-compatible helper (pdfplumber page or any object with extract_words)."""
+    if hasattr(page, "extract_words"):
+        words = page.extract_words(use_text_flow=False, keep_blank_chars=False) or []
+        return extract_rows_from_words(words, page_number)
+    if isinstance(page, fitz.Page):
+        return extract_rows_from_words(_words_from_page(page), page_number)
+    return []
+
+
 def extract_tabular_rows(path: str | Path) -> tuple[list[RawTableRow], Optional[str], Optional[str], int]:
     """Return (rows, supplier, report_date, page_count) from a real supplier PDF."""
     pdf_path = Path(path)
     all_rows: list[RawTableRow] = []
     supplier: Optional[str] = None
     report_date: Optional[str] = None
-    page_count = 0
 
-    with pdfplumber.open(pdf_path) as pdf:
-        page_count = len(pdf.pages)
-        for i, page in enumerate(pdf.pages):
-            words = page.extract_words(use_text_flow=False) or []
+    doc = fitz.open(pdf_path)
+    try:
+        page_count = doc.page_count
+        for i in range(page_count):
+            words = _words_from_page(doc.load_page(i))
             if i == 0:
                 supplier = extract_supplier_from_words(words)
                 report_date = extract_date_from_words(words)
-            all_rows.extend(extract_rows_from_page(page, i + 1))
+            all_rows.extend(extract_rows_from_words(words, i + 1))
+    finally:
+        doc.close()
 
     return all_rows, supplier, report_date, page_count

@@ -473,16 +473,11 @@ def parse_stock_pdf(path: str | Path) -> ParseResult:
     # Only trust tabular extraction when it found complete stock rows
     good_tabular = [r for r in raw_rows if r.item_code and r.stock_qty is not None]
     if len(good_tabular) >= 3:
-        sample_text = " ".join(r.product_name for r in good_tabular[:20]) + " " + path.name
+        # Avoid a second full-file text pass (memory/time) — use product names + filename.
+        sample_text = " ".join(r.product_name for r in good_tabular[:40]) + " " + path.name
         category = detect_category(sample_text, path.name)
         supplier = tab_supplier
         report_date = normalize_report_date(tab_date) if tab_date else None
-
-        extracted = extract_pdf_text(path)
-        full_text = extracted.full_text
-        category = detect_category(full_text + " " + path.name, path.name) or category
-        supplier = supplier or extract_supplier(full_text)
-        report_date = report_date or extract_report_date(full_text)
 
         rows = [
             _raw_table_to_parsed(r, supplier=supplier, report_date=report_date, category=category)
@@ -501,8 +496,8 @@ def parse_stock_pdf(path: str | Path) -> ParseResult:
             supplier=supplier,
             report_date=report_date,
             category=category,
-            total_pages=page_count or extracted.total_pages,
-            extraction_method="pdfplumber-words",
+            total_pages=page_count,
+            extraction_method="pymupdf-words",
             warnings=[],
         )
 
