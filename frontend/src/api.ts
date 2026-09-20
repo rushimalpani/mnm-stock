@@ -1,7 +1,17 @@
 const API_BASE = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') || '';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, init);
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, init);
+  } catch {
+    const health = API_BASE ? `${API_BASE}/api/health` : '/api/health';
+    throw new Error(
+      API_BASE
+        ? `Cannot reach the server. Open ${health}, wait until it shows ok, then try again (free server may take ~1 min to wake).`
+        : 'API URL is missing. Set VITE_API_URL on Vercel and redeploy.',
+    );
+  }
   if (!res.ok) {
     let detail = res.statusText;
     try {
