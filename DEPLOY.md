@@ -1,13 +1,13 @@
 # Deploy: Frontend → Vercel | Backend → Render
 # =============================================
 
-This app uses a React frontend and a FastAPI + SQLite backend.
+This app uses a React frontend and a FastAPI + MongoDB Atlas backend.
 Deploy them separately, then point the frontend at the backend URL.
 
 Important (Render free tier):
-- Without a Persistent Disk, SQLite + uploaded PDFs can be wiped when the service
-  restarts or redeploys.
-- Add a small Persistent Disk and set STOCK_DATA_DIR=/data (steps below).
+- Local disk on Render is wiped when the service sleeps/restarts.
+- Stock data + PDFs are stored in **MongoDB Atlas** (GridFS), so they survive restarts.
+- Set `MONGODB_URI` on Render. No Persistent Disk required.
 
 --------------------------------
 A. Push code to GitHub
@@ -38,15 +38,11 @@ B. Backend on Render
 
    | Key | Value |
    |-----|--------|
-   | `STOCK_DATA_DIR` | `/data` |
+   | `MONGODB_URI` | Atlas connection string (`mongodb+srv://…`) |
+   | `MONGODB_DB` | `mnm_stock` |
    | `CORS_ORIGINS` | `*`  (later change to your Vercel URL, e.g. `https://your-app.vercel.app`) |
 
-5. Persistent Disk (recommended so stock data is not lost):
-
-   - Render → your service → Disks → Add Disk
-   - Name: `stock-data`
-   - Mount path: `/data`
-   - Size: 1 GB is enough to start
+5. Atlas → Network Access → allow `0.0.0.0/0` (or Render IPs) so the API can connect.
 
 6. Click Deploy. Wait until it says Live.
 7. Open: `https://YOUR-SERVICE.onrender.com/api/health`
@@ -130,7 +126,7 @@ G. Checklist if something fails
   and points to Render (`…onrender.com`), then Redeploy Vercel.
 - CORS errors in browser console → set `CORS_ORIGINS` to your Vercel URL on Render.
 - `/api/health` fails → Render service is sleeping or build failed; check Render logs.
-- Data disappeared after redeploy → add Persistent Disk at `/data` and `STOCK_DATA_DIR=/data`.
+- Data disappeared after redeploy → confirm `MONGODB_URI` is set on Render and Atlas Network Access allows the service.
 - Upload timeout on large PDFs → Render free tier is slow; wait or upgrade later.
 
 

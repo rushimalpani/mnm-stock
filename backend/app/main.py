@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import io
 import os
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.database import UPLOADS_DIR, init_db
@@ -13,7 +14,6 @@ from app.routers import designs, export, reports, search, upload
 
 app = FastAPI(title="Supplier Stock Search", version="1.0.0")
 
-# Comma-separated list, e.g. https://mnm-stock.vercel.app,http://localhost:5173
 _cors = os.environ.get("CORS_ORIGINS", "*").strip()
 allow_origins = ["*"] if _cors == "*" else [o.strip() for o in _cors.split(",") if o.strip()]
 
@@ -49,17 +49,28 @@ def health():
 
 @app.get("/api/pdf/{report_id}")
 def get_pdf(report_id: int):
-    from app.database import db_session
+    from app import database as db
 
-    with db_session() as conn:
-        row = conn.execute("SELECT stored_path, filename FROM reports WHERE id = ?", (report_id,)).fetchone()
-        if not row:
-            from fastapi import HTTPException
+    row = db.col("reports").find_one({"id": report_id})
+    if not row:
+        raise HTTPException(status_code=404, detail="Report not found")
 
-            raise HTTPException(status_code=404, detail="Report not found")
-        path = Path(row["stored_path"])
-        if not path.exists():
-            from fastapi import HTTPException
+    filename = row.get("filename") or "report.pdf"
+    gridfs_id = row.get("gridfs_id")
+    if gridfs_id:
+        try:
+            data = db.read_pdf_bytes(gridfs_id)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=404, detail="PDF file missing in MongoDB") from exc
+        return StreamingResponse(
+            io.BytesIO(data),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'inline; filename="{filename}"'},
+        )
 
-            raise HTTPException(status_code=404, detail="PDF file missing on disk")
-        return FileResponse(path, media_type="application/pdf", filename=row["filename"])
+    path = Path(row.get("stored_path") or "")
+    if path.exists():
+        from fastapi.responses import FileResponse
+
+        return FileResponse(path, media_type="application/pdf", filename=filename)
+    raise HTTPException(status_code=404, detail="PDF file missing on disk")

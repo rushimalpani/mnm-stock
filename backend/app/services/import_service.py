@@ -1,4 +1,4 @@
-"""Import preview and confirm into SQLite."""
+"""Import preview and confirm into MongoDB Atlas."""
 from __future__ import annotations
 
 import json
@@ -6,9 +6,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from app.database import UPLOADS_DIR, db_session, init_db
+from app import database as db
 from app.services.normalize import normalize_for_search
 from app.services.parsers import parse_stock_pdf
+
+UPLOADS_DIR = db.UPLOADS_DIR
 
 
 def _utcnow() -> str:
@@ -16,7 +18,6 @@ def _utcnow() -> str:
 
 
 def _filename_key(filename: str) -> str:
-    """Normalize for matching: basename, case-insensitive."""
     return Path(filename).name.strip().casefold()
 
 
@@ -29,181 +30,148 @@ def _unlink_quiet(path: str | Path | None) -> None:
         pass
 
 
-def _get_or_create_supplier(conn, name: Optional[str]) -> Optional[int]:
+def _get_or_create_supplier(name: Optional[str]) -> Optional[int]:
     if not name:
         return None
-    row = conn.execute("SELECT id FROM suppliers WHERE name = ?", (name,)).fetchone()
-    if row:
-        return row["id"]
-    cur = conn.execute("INSERT INTO suppliers (name) VALUES (?)", (name,))
-    return cur.lastrowid
+    existing = db.col("suppliers").find_one({"name": name})
+    if existing:
+        return int(existing["id"])
+    sid = db.next_id("suppliers")
+    db.col("suppliers").insert_one({"id": sid, "name": name})
+    return sid
 
 
-def _get_or_create_product(conn, row: dict) -> int:
+def _get_or_create_product(row: dict) -> int:
     design_number = row.get("design_number")
     category = row.get("category") or "unknown"
     item_code = row.get("item_code")
-    # Prefer stable design label (without colour/size) so variants share one product
     original = row.get("design_name") or row.get("original_product_text") or ""
     normalized = (row.get("design_name") or row.get("normalized_name") or "").lower()
 
-    # If this item code already exists in the same category, reuse that product
-    # (avoids duplicates when style-code parsing improves on re-import).
     if item_code:
-        by_item = conn.execute(
-            """
-            SELECT p.id FROM variants v
-            JOIN products p ON p.id = v.product_id
-            WHERE v.item_code = ? AND p.category = ?
-            ORDER BY p.id DESC
-            LIMIT 1
-            """,
-            (item_code, category),
-        ).fetchone()
-        if by_item:
-            conn.execute(
-                """
-                UPDATE products
-                SET design_number = ?, original_name = ?, normalized_name = ?
-                WHERE id = ?
-                """,
-                (design_number, original, normalized, by_item["id"]),
-            )
-            return by_item["id"]
+        variant = db.col("variants").find_one({"item_code": item_code}, sort=[("id", -1)])
+        if variant:
+            product = db.col("products").find_one({"id": variant["product_id"], "category": category})
+            if product:
+                db.col("products").update_one(
+                    {"id": product["id"]},
+                    {
+                        "$set": {
+                            "design_number": design_number,
+                            "original_name": original,
+                            "normalized_name": normalized,
+                        }
+                    },
+                )
+                return int(product["id"])
 
     if design_number:
-        existing = conn.execute(
-            """
-            SELECT id FROM products
-            WHERE design_number = ? AND category = ?
-            """,
-            (design_number, category),
-        ).fetchone()
+        existing = db.col("products").find_one(
+            {"design_number": design_number, "category": category}
+        )
         if existing:
-            return existing["id"]
+            return int(existing["id"])
     else:
-        existing = conn.execute(
-            """
-            SELECT id FROM products
-            WHERE IFNULL(design_number, '') = ''
-              AND normalized_name = ?
-              AND category = ?
-            """,
-            (normalized, category),
-        ).fetchone()
+        existing = db.col("products").find_one(
+            {
+                "$or": [{"design_number": None}, {"design_number": ""}],
+                "normalized_name": normalized,
+                "category": category,
+            }
+        )
         if existing:
-            return existing["id"]
+            return int(existing["id"])
 
-    cur = conn.execute(
-        """
-        INSERT INTO products (design_number, original_name, normalized_name, category)
-        VALUES (?, ?, ?, ?)
-        """,
-        (design_number, original, normalized, category),
+    pid = db.next_id("products")
+    db.col("products").insert_one(
+        {
+            "id": pid,
+            "design_number": design_number,
+            "original_name": original,
+            "normalized_name": normalized,
+            "category": category,
+        }
     )
-    return cur.lastrowid
+    return pid
 
 
-def _get_or_create_variant(conn, product_id: int, row: dict) -> int:
+def _get_or_create_variant(product_id: int, row: dict) -> int:
     item_code = row.get("item_code")
     colour = row.get("colour")
     size = row.get("size")
     original_variant = row.get("original_product_text") or ""
 
-    # Item code is the stable identity — reuse even if product text changed (e.g. wrap fix)
     if item_code:
-        existing = conn.execute(
-            """
-            SELECT id FROM variants
-            WHERE product_id = ?
-              AND IFNULL(item_code, '') = ?
-            """,
-            (product_id, item_code),
-        ).fetchone()
+        existing = db.col("variants").find_one(
+            {"product_id": product_id, "item_code": item_code}
+        )
         if existing:
-            conn.execute(
-                """
-                UPDATE variants
-                SET colour = ?, size = ?, original_variant_name = ?
-                WHERE id = ?
-                """,
-                (colour, size, original_variant, existing["id"]),
+            db.col("variants").update_one(
+                {"id": existing["id"]},
+                {
+                    "$set": {
+                        "colour": colour,
+                        "size": size,
+                        "original_variant_name": original_variant,
+                    }
+                },
             )
-            return existing["id"]
+            return int(existing["id"])
 
-    existing = conn.execute(
-        """
-        SELECT id FROM variants
-        WHERE product_id = ?
-          AND IFNULL(item_code, '') = IFNULL(?, '')
-          AND IFNULL(colour, '') = IFNULL(?, '')
-          AND IFNULL(size, '') = IFNULL(?, '')
-          AND original_variant_name = ?
-        """,
-        (product_id, item_code, colour, size, original_variant),
-    ).fetchone()
+    existing = db.col("variants").find_one(
+        {
+            "product_id": product_id,
+            "item_code": item_code,
+            "colour": colour,
+            "size": size,
+            "original_variant_name": original_variant,
+        }
+    )
     if existing:
-        return existing["id"]
-    cur = conn.execute(
-        """
-        INSERT INTO variants (product_id, item_code, colour, size, original_variant_name)
-        VALUES (?, ?, ?, ?, ?)
-        """,
-        (product_id, item_code, colour, size, original_variant),
+        return int(existing["id"])
+
+    vid = db.next_id("variants")
+    db.col("variants").insert_one(
+        {
+            "id": vid,
+            "product_id": product_id,
+            "item_code": item_code,
+            "colour": colour,
+            "size": size,
+            "original_variant_name": original_variant,
+        }
     )
-    return cur.lastrowid
+    return vid
 
 
-def _upsert_search_index(conn, *, design_number, design_name, normalized_name, colour, size, item_code, supplier, category):
-    conn.execute(
-        """
-        INSERT INTO search_index (
-            design_number, design_name, normalized_name, colour, size, item_code, supplier, category
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            normalize_for_search(design_number),
-            normalize_for_search(design_name),
-            normalize_for_search(normalized_name),
-            normalize_for_search(colour),
-            normalize_for_search(size),
-            normalize_for_search(item_code),
-            normalize_for_search(supplier),
-            normalize_for_search(category),
-        ),
-    )
-
-
-def _find_reports_same_filename(conn, filename: str) -> list:
+def _find_reports_same_filename(filename: str) -> list[dict]:
     key = _filename_key(filename)
-    rows = conn.execute(
-        "SELECT id, filename, stored_path FROM reports ORDER BY id ASC"
-    ).fetchall()
-    return [r for r in rows if _filename_key(r["filename"]) == key]
+    return [
+        r
+        for r in db.col("reports").find().sort("id", 1)
+        if _filename_key(r.get("filename") or "") == key
+    ]
 
 
-def _purge_report_children(conn, report_id: int) -> None:
-    conn.execute("DELETE FROM stock_snapshots WHERE report_id = ?", (report_id,))
-    conn.execute("DELETE FROM import_previews WHERE report_id = ?", (report_id,))
+def _purge_report_children(report_id: int) -> None:
+    db.col("stock_snapshots").delete_many({"report_id": report_id})
+    db.col("import_previews").delete_many({"report_id": report_id})
 
 
-def _same_file(a: Path, b: Path) -> bool:
-    try:
-        if a.exists() and b.exists():
-            return a.samefile(b)
-    except OSError:
-        pass
-    try:
-        return a.resolve().as_posix().casefold() == b.resolve().as_posix().casefold()
-    except OSError:
-        return False
+def _delete_report_pdf(report: dict) -> None:
+    grid_id = report.get("gridfs_id")
+    if grid_id:
+        db.delete_pdf(grid_id)
+    stored = report.get("stored_path")
+    if stored and not str(stored).startswith("gridfs:"):
+        _unlink_quiet(stored)
 
 
 def save_upload(file_bytes: bytes, filename: str) -> Path:
-    init_db()
+    """Write a local temp copy for parsing; GridFS upload happens in create_preview."""
+    db.init_db()
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     safe = Path(filename).name
-    # Microseconds avoid collisions; keep original casing only in DB filename field
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     dest = UPLOADS_DIR / f"{stamp}_{safe}"
     dest.write_bytes(file_bytes)
@@ -211,110 +179,74 @@ def save_upload(file_bytes: bytes, filename: str) -> Path:
 
 
 def create_preview(stored_path: Path, original_filename: str) -> dict[str, Any]:
-    """Parse PDF into a preview.
-
-    Same original filename (case-insensitive) replaces the previous report of
-    that name: stock data is cleared, old PDF file is deleted, report id reused.
-    Different filenames keep separate reports.
-    """
-    init_db()
+    """Parse PDF into a preview and persist metadata + PDF in MongoDB/GridFS."""
+    db.init_db()
     result = parse_stock_pdf(stored_path)
     replaced = False
-    old_paths: list[str] = []
+    gridfs_id = db.store_pdf_path(stored_path, original_filename)
 
-    with db_session() as conn:
-        supplier_id = _get_or_create_supplier(conn, result.supplier)
-        same = _find_reports_same_filename(conn, original_filename)
+    supplier_id = _get_or_create_supplier(result.supplier)
+    same = _find_reports_same_filename(original_filename)
 
-        if same:
-            replaced = True
-            keep = same[-1]
-            for r in same[:-1]:
-                old_paths.append(r["stored_path"])
-                _purge_report_children(conn, r["id"])
-                conn.execute("DELETE FROM reports WHERE id = ?", (r["id"],))
+    report_doc = {
+        "filename": original_filename,
+        "stored_path": f"gridfs:{gridfs_id}",
+        "gridfs_id": gridfs_id,
+        "report_date": result.report_date,
+        "category": result.category,
+        "supplier_id": supplier_id,
+        "uploaded_at": _utcnow(),
+        "total_pages": result.total_pages,
+        "total_rows": len(result.rows),
+        "rows_parsed": result.rows_parsed,
+        "rows_review": result.rows_review,
+        "status": "preview",
+        "notes": "; ".join(result.warnings) if result.warnings else None,
+    }
 
-            old_paths.append(keep["stored_path"])
-            _purge_report_children(conn, keep["id"])
-            conn.execute(
-                """
-                UPDATE reports SET
-                    filename = ?,
-                    stored_path = ?,
-                    report_date = ?,
-                    category = ?,
-                    supplier_id = ?,
-                    uploaded_at = ?,
-                    total_pages = ?,
-                    total_rows = ?,
-                    rows_parsed = ?,
-                    rows_review = ?,
-                    status = 'preview',
-                    notes = ?
-                WHERE id = ?
-                """,
-                (
-                    original_filename,
-                    str(stored_path),
-                    result.report_date,
-                    result.category,
-                    supplier_id,
-                    _utcnow(),
-                    result.total_pages,
-                    len(result.rows),
-                    result.rows_parsed,
-                    result.rows_review,
-                    "; ".join(result.warnings) if result.warnings else None,
-                    keep["id"],
-                ),
-            )
-            report_id = keep["id"]
-        else:
-            cur = conn.execute(
-                """
-                INSERT INTO reports (
-                    filename, stored_path, report_date, category, supplier_id,
-                    uploaded_at, total_pages, total_rows, rows_parsed, rows_review, status, notes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'preview', ?)
-                """,
-                (
-                    original_filename,
-                    str(stored_path),
-                    result.report_date,
-                    result.category,
-                    supplier_id,
-                    _utcnow(),
-                    result.total_pages,
-                    len(result.rows),
-                    result.rows_parsed,
-                    result.rows_review,
-                    "; ".join(result.warnings) if result.warnings else None,
-                ),
-            )
-            report_id = cur.lastrowid
+    if same:
+        replaced = True
+        keep = same[-1]
+        for r in same[:-1]:
+            _purge_report_children(int(r["id"]))
+            _delete_report_pdf(r)
+            db.col("reports").delete_one({"id": r["id"]})
 
-        for idx, row in enumerate(result.rows):
-            payload = row.to_dict()
-            conn.execute(
-                """
-                INSERT INTO import_previews (report_id, row_index, payload_json, needs_review, review_notes)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    report_id,
-                    idx,
-                    json.dumps(payload),
-                    1 if row.needs_review else 0,
-                    "; ".join(row.review_notes),
-                ),
-            )
+        _purge_report_children(int(keep["id"]))
+        _delete_report_pdf(keep)
+        db.col("reports").update_one({"id": keep["id"]}, {"$set": report_doc})
+        report_id = int(keep["id"])
+    else:
+        report_id = db.next_id("reports")
+        report_doc["id"] = report_id
+        db.col("reports").insert_one(report_doc)
 
-    # Free disk: remove previous PDF(s) for this filename (not the new file)
-    for p in old_paths:
-        op = Path(p)
-        if _same_file(op, stored_path):
-            continue
-        _unlink_quiet(op)
+    preview_docs = []
+    for idx, row in enumerate(result.rows):
+        preview_docs.append(
+            {
+                "id": db.next_id("import_previews"),
+                "report_id": report_id,
+                "row_index": idx,
+                "payload_json": json.dumps(row.to_dict()),
+                "needs_review": 1 if row.needs_review else 0,
+                "review_notes": "; ".join(row.review_notes),
+            }
+        )
+    if preview_docs:
+        db.col("import_previews").insert_many(preview_docs)
+
+    # Drop ephemeral upload-cache copies; keep caller temp/sample files
+    try:
+        if stored_path.resolve().is_relative_to(UPLOADS_DIR.resolve()):
+            _unlink_quiet(stored_path)
+    except (OSError, ValueError, AttributeError):
+        # Python <3.9 fallback / path edge cases
+        try:
+            if str(stored_path.resolve()).startswith(str(UPLOADS_DIR.resolve())):
+                _unlink_quiet(stored_path)
+        except OSError:
+            pass
 
     sample = [r.to_dict() for r in result.rows[:25]]
     return {
@@ -336,30 +268,28 @@ def create_preview(stored_path: Path, original_filename: str) -> dict[str, Any]:
 
 
 def get_preview(report_id: int) -> dict[str, Any]:
-    with db_session() as conn:
-        report = conn.execute("SELECT * FROM reports WHERE id = ?", (report_id,)).fetchone()
-        if not report:
-            raise ValueError("Report not found")
-        supplier = None
-        if report["supplier_id"]:
-            s = conn.execute("SELECT name FROM suppliers WHERE id = ?", (report["supplier_id"],)).fetchone()
-            supplier = s["name"] if s else None
-        previews = conn.execute(
-            "SELECT * FROM import_previews WHERE report_id = ? ORDER BY row_index",
-            (report_id,),
-        ).fetchall()
-        rows = [json.loads(p["payload_json"]) for p in previews]
+    report = db.col("reports").find_one({"id": report_id})
+    if not report:
+        raise ValueError("Report not found")
+    supplier = None
+    if report.get("supplier_id"):
+        s = db.col("suppliers").find_one({"id": report["supplier_id"]})
+        supplier = s["name"] if s else None
+    previews = list(
+        db.col("import_previews").find({"report_id": report_id}).sort("row_index", 1)
+    )
+    rows = [json.loads(p["payload_json"]) for p in previews]
     return {
         "report_id": report_id,
         "filename": report["filename"],
-        "report_date": report["report_date"],
+        "report_date": report.get("report_date"),
         "category": report["category"],
         "supplier": supplier,
-        "pages": report["total_pages"],
-        "rows_detected": report["total_rows"],
-        "rows_parsed": report["rows_parsed"],
-        "rows_review": report["rows_review"],
-        "warnings": [report["notes"]] if report["notes"] else [],
+        "pages": report.get("total_pages"),
+        "rows_detected": report.get("total_rows"),
+        "rows_parsed": report.get("rows_parsed"),
+        "rows_review": report.get("rows_review"),
+        "warnings": [report["notes"]] if report.get("notes") else [],
         "sample_rows": rows[:50],
         "all_rows": rows,
         "status": report["status"],
@@ -368,80 +298,83 @@ def get_preview(report_id: int) -> dict[str, Any]:
 
 
 def confirm_import(report_id: int, include_review_rows: bool = False) -> dict[str, Any]:
-    """Insert preview rows as stock snapshots for this report."""
-    with db_session() as conn:
-        report = conn.execute("SELECT * FROM reports WHERE id = ?", (report_id,)).fetchone()
-        if not report:
-            raise ValueError("Report not found")
-        if report["status"] == "imported":
-            return {
+    report = db.col("reports").find_one({"id": report_id})
+    if not report:
+        raise ValueError("Report not found")
+    if report["status"] == "imported":
+        return {
+            "report_id": report_id,
+            "status": "imported",
+            "imported_rows": report.get("rows_parsed") or 0,
+            "skipped_review_rows": report.get("rows_review") or 0,
+            "message": "Already imported",
+        }
+
+    supplier_name = None
+    if report.get("supplier_id"):
+        s = db.col("suppliers").find_one({"id": report["supplier_id"]})
+        supplier_name = s["name"] if s else None
+
+    previews = list(
+        db.col("import_previews").find({"report_id": report_id}).sort("row_index", 1)
+    )
+
+    imported = 0
+    skipped = 0
+    snapshot_docs = []
+    for p in previews:
+        row = json.loads(p["payload_json"])
+        if p.get("needs_review") and not include_review_rows:
+            skipped += 1
+            continue
+        product_id = _get_or_create_product(row)
+        variant_id = _get_or_create_variant(product_id, row)
+        # Unique-ish: skip if same variant+report+page already exists
+        exists = db.col("stock_snapshots").find_one(
+            {
+                "variant_id": variant_id,
                 "report_id": report_id,
-                "status": "imported",
-                "imported_rows": report["rows_parsed"] or 0,
-                "skipped_review_rows": report["rows_review"] or 0,
-                "message": "Already imported",
+                "pdf_page": row.get("pdf_page"),
             }
-
-        supplier_name = None
-        if report["supplier_id"]:
-            s = conn.execute("SELECT name FROM suppliers WHERE id = ?", (report["supplier_id"],)).fetchone()
-            supplier_name = s["name"] if s else None
-
-        previews = conn.execute(
-            "SELECT * FROM import_previews WHERE report_id = ? ORDER BY row_index",
-            (report_id,),
-        ).fetchall()
-
-        imported = 0
-        skipped = 0
-        for p in previews:
-            row = json.loads(p["payload_json"])
-            if p["needs_review"] and not include_review_rows:
-                skipped += 1
-                continue
-            product_id = _get_or_create_product(conn, row)
-            variant_id = _get_or_create_variant(conn, product_id, row)
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO stock_snapshots (
-                    variant_id, report_id, purchase_qty, purchase_rate, purchase_amount,
-                    stock_qty, difference, mrp, stock_amount, pdf_page,
-                    original_product_text, needs_review, review_notes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    variant_id,
-                    report_id,
-                    row.get("purchase_qty"),
-                    row.get("purchase_rate"),
-                    row.get("purchase_amount"),
-                    row.get("stock_qty"),
-                    row.get("difference"),
-                    row.get("mrp"),
-                    row.get("stock_amount"),
-                    row.get("pdf_page"),
-                    row.get("original_product_text"),
-                    1 if row.get("needs_review") else 0,
-                    row.get("review_notes"),
-                ),
-            )
-            _upsert_search_index(
-                conn,
-                design_number=row.get("design_number"),
-                design_name=row.get("design_name"),
-                normalized_name=row.get("normalized_name"),
-                colour=row.get("colour"),
-                size=row.get("size"),
-                item_code=row.get("item_code"),
-                supplier=row.get("supplier") or supplier_name,
-                category=row.get("category"),
-            )
-            imported += 1
-
-        conn.execute(
-            "UPDATE reports SET status = 'imported', rows_parsed = ?, rows_review = ? WHERE id = ?",
-            (imported, skipped, report_id),
         )
+        if exists:
+            imported += 1
+            continue
+        snapshot_docs.append(
+            {
+                "id": db.next_id("stock_snapshots"),
+                "variant_id": variant_id,
+                "report_id": report_id,
+                "purchase_qty": row.get("purchase_qty"),
+                "purchase_rate": row.get("purchase_rate"),
+                "purchase_amount": row.get("purchase_amount"),
+                "stock_qty": row.get("stock_qty"),
+                "difference": row.get("difference"),
+                "mrp": row.get("mrp"),
+                "stock_amount": row.get("stock_amount"),
+                "pdf_page": row.get("pdf_page"),
+                "original_product_text": row.get("original_product_text"),
+                "needs_review": 1 if row.get("needs_review") else 0,
+                "review_notes": row.get("review_notes"),
+                "supplier": row.get("supplier") or supplier_name,
+                "category": row.get("category"),
+                "design_number": row.get("design_number"),
+                "design_name": row.get("design_name"),
+                "normalized_name": row.get("normalized_name"),
+                "colour": row.get("colour"),
+                "size": row.get("size"),
+                "item_code": row.get("item_code"),
+            }
+        )
+        imported += 1
+
+    if snapshot_docs:
+        db.col("stock_snapshots").insert_many(snapshot_docs)
+
+    db.col("reports").update_one(
+        {"id": report_id},
+        {"$set": {"status": "imported", "rows_parsed": imported, "rows_review": skipped}},
+    )
 
     return {
         "report_id": report_id,
@@ -451,17 +384,31 @@ def confirm_import(report_id: int, include_review_rows: bool = False) -> dict[st
     }
 
 
+def _report_sort_key(r: dict) -> tuple:
+    rd = r.get("report_date") or ""
+    # dd/mm/yyyy → yyyymmdd for sort; empty last
+    if len(rd) >= 10 and rd[2] == "/" and rd[5] == "/":
+        iso = f"{rd[6:10]}{rd[3:5]}{rd[0:2]}"
+        empty = 0
+    else:
+        iso = rd
+        empty = 1
+    return (empty, iso, r.get("uploaded_at") or "")
+
+
 def list_reports() -> list[dict[str, Any]]:
-    with db_session() as conn:
-        rows = conn.execute(
-            """
-            SELECT r.*, s.name AS supplier_name
-            FROM reports r
-            LEFT JOIN suppliers s ON s.id = r.supplier_id
-            ORDER BY
-                CASE WHEN r.report_date IS NULL THEN 1 ELSE 0 END,
-                date(substr(r.report_date, 7, 4) || '-' || substr(r.report_date, 4, 2) || '-' || substr(r.report_date, 1, 2)) DESC,
-                r.uploaded_at DESC
-            """
-        ).fetchall()
-        return [dict(r) for r in rows]
+    rows = list(db.col("reports").find())
+    suppliers = {s["id"]: s["name"] for s in db.col("suppliers").find()}
+    out = []
+    for r in rows:
+        d = dict(r)
+        d.pop("_id", None)
+        d["supplier_name"] = suppliers.get(r.get("supplier_id"))
+        out.append(d)
+    out.sort(key=_report_sort_key, reverse=True)
+    return out
+
+
+# Back-compat alias used by older tests
+def init_db() -> None:
+    db.init_db()

@@ -9,7 +9,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from app.database import DB_PATH, init_db  # noqa: E402
+from app.database import init_db, reset_mongo_for_tests  # noqa: E402
+from app import database as database_module  # noqa: E402
 from app.services.normalize import (  # noqa: E402
     extract_design_number,
     join_multiline_tokens,
@@ -25,19 +26,26 @@ from scripts.generate_samples import create_fashion_sample, create_jewellery_sam
 
 @pytest.fixture()
 def fresh_db(tmp_path, monkeypatch):
-    db = tmp_path / "test.db"
+    """Isolate tests on MongoDB DB `mnm_stock_test` and a temp uploads cache."""
     uploads = tmp_path / "uploads"
     uploads.mkdir()
+    monkeypatch.setenv("MONGODB_DB", "mnm_stock_test")
+    # Force client/db rebuild against test database
+    database_module._client = None
+    database_module._db = None
+    database_module._fs = None
+    monkeypatch.setattr(database_module, "UPLOADS_DIR", uploads)
     monkeypatch.setattr(import_service, "UPLOADS_DIR", uploads)
-    monkeypatch.setattr("app.database.DB_PATH", db)
-    monkeypatch.setattr("app.database.UPLOADS_DIR", uploads)
-    monkeypatch.setattr(import_service, "init_db", init_db)
-    # re-bind DB path used by db_session
-    import app.database as database
-
-    monkeypatch.setattr(database, "DB_PATH", db)
-    init_db()
-    yield db
+    reset_mongo_for_tests()
+    yield uploads
+    # leave test DB empty for next run
+    try:
+        reset_mongo_for_tests()
+    except Exception:
+        pass
+    database_module._client = None
+    database_module._db = None
+    database_module._fs = None
 
 
 def test_design_number_from_product_name_not_page():
@@ -357,8 +365,8 @@ def test_historical_reports_not_overwritten(fresh_db, tmp_path):
 
 
 def test_same_filename_replaces_report(fresh_db, tmp_path):
-    """Re-uploading the same filename replaces stock + deletes the old PDF file."""
-    from app.database import db_session
+    """Re-uploading the same filename replaces stock + old GridFS PDF."""
+    from app import database as db
 
     uploads = import_service.UPLOADS_DIR
     pdf1 = create_fashion_sample(tmp_path / "stock.pdf")
@@ -367,7 +375,11 @@ def test_same_filename_replaces_report(fresh_db, tmp_path):
     assert p1["replaced"] is False
     import_service.confirm_import(p1["report_id"], include_review_rows=True)
     report_id = p1["report_id"]
-    assert stored1.exists()
+    # Local cache copy is removed after GridFS upload
+    assert not stored1.exists()
+    r1 = db.col("reports").find_one({"id": report_id})
+    assert r1 and r1.get("gridfs_id")
+    old_grid = r1["gridfs_id"]
 
     pdf2 = create_fashion_sample(tmp_path / "stock2.pdf")
     stored2 = import_service.save_upload(pdf2.read_bytes(), "stock.pdf")
@@ -375,18 +387,16 @@ def test_same_filename_replaces_report(fresh_db, tmp_path):
     assert p2["replaced"] is True
     assert p2["report_id"] == report_id
     assert p2["status"] == "preview"
-    assert not stored1.exists()
-    assert stored2.exists()
+    assert not stored2.exists()
 
     reports = [r for r in import_service.list_reports() if r["filename"].lower() == "stock.pdf"]
     assert len(reports) == 1
     assert reports[0]["status"] == "preview"
+    r2 = db.col("reports").find_one({"id": report_id})
+    assert r2["gridfs_id"] != old_grid
+    assert not db.get_fs().exists(__import__("bson").ObjectId(old_grid))
 
-    with db_session() as conn:
-        snaps = conn.execute(
-            "SELECT COUNT(*) AS c FROM stock_snapshots WHERE report_id = ?",
-            (report_id,),
-        ).fetchone()["c"]
+    snaps = db.col("stock_snapshots").count_documents({"report_id": report_id})
     assert snaps == 0
 
     confirmed = import_service.confirm_import(report_id, include_review_rows=True)
@@ -400,4 +410,3 @@ def test_same_filename_replaces_report(fresh_db, tmp_path):
     assert p3["replaced"] is False
     assert p3["report_id"] != report_id
     assert len(import_service.list_reports()) >= 2
-    assert len(list(uploads.glob("*.pdf"))) >= 2
