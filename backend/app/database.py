@@ -41,7 +41,15 @@ def _uri() -> str:
 def get_client() -> MongoClient:
     global _client
     if _client is None:
-        _client = MongoClient(_uri(), serverSelectionTimeoutMS=15000)
+        import certifi
+
+        _client = MongoClient(
+            _uri(),
+            serverSelectionTimeoutMS=20000,
+            connectTimeoutMS=20000,
+            tls=True,
+            tlsCAFile=certifi.where(),
+        )
     return _client
 
 

@@ -6,6 +6,7 @@ pdfplumber>=0.11.0
 openpyxl>=3.1.5
 aiofiles>=24.1.0
 pymongo>=4.6.0
+certifi>=2024.0.0
 dnspython>=2.6.0
 python-dotenv>=1.0.0
 pytest>=8.0.0

@@ -37,7 +37,13 @@ app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 
 @app.on_event("startup")
 def on_startup() -> None:
-    init_db()
+    try:
+        init_db()
+    except Exception as exc:  # noqa: BLE001
+        # Don't crash boot on transient Atlas TLS — requests will retry connect
+        import logging
+
+        logging.getLogger("uvicorn.error").error("MongoDB init failed on startup: %s", exc)
 
 
 @app.api_route("/", methods=["GET", "HEAD"])
