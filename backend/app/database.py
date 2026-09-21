@@ -49,6 +49,8 @@ def get_client() -> MongoClient:
             connectTimeoutMS=20000,
             tls=True,
             tlsCAFile=certifi.where(),
+            maxPoolSize=50,
+            retryWrites=True,
         )
     return _client
 

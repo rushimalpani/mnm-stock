@@ -41,12 +41,19 @@ def _get_or_create_supplier(name: Optional[str]) -> Optional[int]:
     return sid
 
 
-def _get_or_create_product(row: dict) -> int:
+def _get_or_create_product(row: dict, cache: Optional[dict] = None) -> int:
     design_number = row.get("design_number")
     category = row.get("category") or "unknown"
     item_code = row.get("item_code")
     original = row.get("design_name") or row.get("original_product_text") or ""
     normalized = (row.get("design_name") or row.get("normalized_name") or "").lower()
+    cache = cache if cache is not None else {}
+
+    design_key = (str(design_number or ""), category)
+    if design_number and design_key in cache.get("by_design", {}):
+        return cache["by_design"][design_key]
+    if item_code and (item_code, category) in cache.get("by_item_product", {}):
+        return cache["by_item_product"][(item_code, category)]
 
     if item_code:
         variant = db.col("variants").find_one({"item_code": item_code}, sort=[("id", -1)])
@@ -63,14 +70,19 @@ def _get_or_create_product(row: dict) -> int:
                         }
                     },
                 )
-                return int(product["id"])
+                pid = int(product["id"])
+                cache.setdefault("by_design", {})[design_key] = pid
+                cache.setdefault("by_item_product", {})[(item_code, category)] = pid
+                return pid
 
     if design_number:
         existing = db.col("products").find_one(
             {"design_number": design_number, "category": category}
         )
         if existing:
-            return int(existing["id"])
+            pid = int(existing["id"])
+            cache.setdefault("by_design", {})[design_key] = pid
+            return pid
     else:
         existing = db.col("products").find_one(
             {
@@ -92,14 +104,21 @@ def _get_or_create_product(row: dict) -> int:
             "category": category,
         }
     )
+    cache.setdefault("by_design", {})[design_key] = pid
+    if item_code:
+        cache.setdefault("by_item_product", {})[(item_code, category)] = pid
     return pid
 
 
-def _get_or_create_variant(product_id: int, row: dict) -> int:
+def _get_or_create_variant(product_id: int, row: dict, cache: Optional[dict] = None) -> int:
     item_code = row.get("item_code")
     colour = row.get("colour")
     size = row.get("size")
     original_variant = row.get("original_product_text") or ""
+    cache = cache if cache is not None else {}
+    vkey = (product_id, item_code or "", colour or "", size or "")
+    if vkey in cache.get("variants", {}):
+        return cache["variants"][vkey]
 
     if item_code:
         existing = db.col("variants").find_one(
@@ -116,7 +135,9 @@ def _get_or_create_variant(product_id: int, row: dict) -> int:
                     }
                 },
             )
-            return int(existing["id"])
+            vid = int(existing["id"])
+            cache.setdefault("variants", {})[vkey] = vid
+            return vid
 
     existing = db.col("variants").find_one(
         {
@@ -128,7 +149,9 @@ def _get_or_create_variant(product_id: int, row: dict) -> int:
         }
     )
     if existing:
-        return int(existing["id"])
+        vid = int(existing["id"])
+        cache.setdefault("variants", {})[vkey] = vid
+        return vid
 
     vid = db.next_id("variants")
     db.col("variants").insert_one(
@@ -141,6 +164,7 @@ def _get_or_create_variant(product_id: int, row: dict) -> int:
             "original_variant_name": original_variant,
         }
     )
+    cache.setdefault("variants", {})[vkey] = vid
     return vid
 
 
@@ -323,19 +347,138 @@ def confirm_import(report_id: int, include_review_rows: bool = False) -> dict[st
         db.col("import_previews").find({"report_id": report_id}).sort("row_index", 1)
     )
 
-    imported = 0
+    rows: list[dict] = []
     skipped = 0
-    pending_rows: list[dict] = []
     for p in previews:
         row = json.loads(p["payload_json"])
         if p.get("needs_review") and not include_review_rows:
             skipped += 1
             continue
-        product_id = _get_or_create_product(row)
-        variant_id = _get_or_create_variant(product_id, row)
-        pending_rows.append((variant_id, row))
+        rows.append(row)
 
-    # Skip rows that already have a snapshot for this report+variant+page
+    # --- Bulk resolve products (few queries instead of one per row) ---
+    design_keys = {
+        (str(r.get("design_number") or ""), r.get("category") or "unknown")
+        for r in rows
+        if r.get("design_number")
+    }
+    categories = list({k[1] for k in design_keys}) or ["unknown"]
+    design_numbers = [k[0] for k in design_keys if k[0]]
+
+    product_by_design: dict[tuple[str, str], int] = {}
+    if design_numbers:
+        for p in db.col("products").find(
+            {"design_number": {"$in": design_numbers}, "category": {"$in": categories}}
+        ):
+            product_by_design[(str(p.get("design_number") or ""), p.get("category") or "unknown")] = int(
+                p["id"]
+            )
+
+    missing_products = []
+    seen_missing: set[tuple[str, str]] = set()
+    for r in rows:
+        dn = str(r.get("design_number") or "")
+        cat = r.get("category") or "unknown"
+        key = (dn, cat)
+        if dn and key not in product_by_design and key not in seen_missing:
+            seen_missing.add(key)
+            missing_products.append(r)
+
+    if missing_products:
+        # One row per design key
+        unique_missing = []
+        seen: set[tuple[str, str]] = set()
+        for r in missing_products:
+            key = (str(r.get("design_number") or ""), r.get("category") or "unknown")
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_missing.append(r)
+        ids = db.next_ids("products", len(unique_missing))
+        docs = []
+        for r, pid in zip(unique_missing, ids):
+            dn = r.get("design_number")
+            cat = r.get("category") or "unknown"
+            original = r.get("design_name") or r.get("original_product_text") or ""
+            normalized = (r.get("design_name") or r.get("normalized_name") or "").lower()
+            docs.append(
+                {
+                    "id": pid,
+                    "design_number": dn,
+                    "original_name": original,
+                    "normalized_name": normalized,
+                    "category": cat,
+                }
+            )
+            product_by_design[(str(dn or ""), cat)] = pid
+        if docs:
+            db.col("products").insert_many(docs)
+
+    # Map each row → product_id
+    row_product_ids: list[int] = []
+    cache: dict = {"by_design": dict(product_by_design), "by_item_product": {}, "variants": {}}
+    for r in rows:
+        dn = str(r.get("design_number") or "")
+        cat = r.get("category") or "unknown"
+        if dn and (dn, cat) in product_by_design:
+            row_product_ids.append(product_by_design[(dn, cat)])
+        else:
+            row_product_ids.append(_get_or_create_product(r, cache))
+
+    # --- Bulk resolve variants ---
+    item_codes = [r.get("item_code") for r in rows if r.get("item_code")]
+    variant_by_product_item: dict[tuple[int, str], int] = {}
+    if item_codes:
+        for v in db.col("variants").find({"item_code": {"$in": item_codes}}):
+            variant_by_product_item[(int(v["product_id"]), str(v.get("item_code") or ""))] = int(v["id"])
+
+    # Update colour/size for existing variants in one pass (optional light touch)
+    missing_variants: list[tuple[int, dict]] = []
+    row_variant_ids: list[int] = []
+    seen_new_variant: set[tuple[int, str]] = set()
+    for r, pid in zip(rows, row_product_ids):
+        ic = str(r.get("item_code") or "")
+        key = (pid, ic)
+        if ic and key in variant_by_product_item:
+            row_variant_ids.append(variant_by_product_item[key])
+        elif ic and key not in seen_new_variant:
+            seen_new_variant.add(key)
+            missing_variants.append((pid, r))
+            row_variant_ids.append(-1)  # placeholder
+        elif ic:
+            # already queued
+            row_variant_ids.append(-1)
+        else:
+            row_variant_ids.append(_get_or_create_variant(pid, r, cache))
+
+    if missing_variants:
+        ids = db.next_ids("variants", len(missing_variants))
+        docs = []
+        for (pid, r), vid in zip(missing_variants, ids):
+            ic = str(r.get("item_code") or "")
+            docs.append(
+                {
+                    "id": vid,
+                    "product_id": pid,
+                    "item_code": r.get("item_code"),
+                    "colour": r.get("colour"),
+                    "size": r.get("size"),
+                    "original_variant_name": r.get("original_product_text") or "",
+                }
+            )
+            variant_by_product_item[(pid, ic)] = vid
+        if docs:
+            db.col("variants").insert_many(docs)
+
+    # Fill placeholders
+    fixed_variant_ids = []
+    for r, pid, vid in zip(rows, row_product_ids, row_variant_ids):
+        if vid != -1:
+            fixed_variant_ids.append(vid)
+        else:
+            ic = str(r.get("item_code") or "")
+            fixed_variant_ids.append(variant_by_product_item[(pid, ic)])
+
     existing = {
         (int(s["variant_id"]), s.get("pdf_page"))
         for s in db.col("stock_snapshots").find(
@@ -343,12 +486,13 @@ def confirm_import(report_id: int, include_review_rows: bool = False) -> dict[st
         )
     }
     to_insert = []
-    for variant_id, row in pending_rows:
-        key = (int(variant_id), row.get("pdf_page"))
+    imported_existing = 0
+    for r, vid in zip(rows, fixed_variant_ids):
+        key = (int(vid), r.get("pdf_page"))
         if key in existing:
-            imported += 1
+            imported_existing += 1
             continue
-        to_insert.append((variant_id, row))
+        to_insert.append((vid, r))
 
     snapshot_docs = []
     if to_insert:
@@ -380,12 +524,11 @@ def confirm_import(report_id: int, include_review_rows: bool = False) -> dict[st
                     "item_code": row.get("item_code"),
                 }
             )
-            imported += 1
-
-    if snapshot_docs:
         chunk = 500
         for i in range(0, len(snapshot_docs), chunk):
             db.col("stock_snapshots").insert_many(snapshot_docs[i : i + chunk])
+
+    imported = imported_existing + len(snapshot_docs)
 
     db.col("reports").update_one(
         {"id": report_id},

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   api,
@@ -33,20 +33,7 @@ export function SearchPage() {
     api.reports().then((r) => setReports(r.reports.filter((x) => x.status === 'imported')));
   }, []);
 
-  const queryParams = useMemo(() => {
-    const rid =
-      reportId && reportId !== 'latest' && reportId !== 'all' ? Number(reportId) : undefined;
-    return {
-      q,
-      latest: reportId === 'latest',
-      report_id: rid,
-      category: category || undefined,
-      colour: colour || undefined,
-      stock_status: stockStatus || undefined,
-      page,
-      page_size: PAGE_SIZE,
-    };
-  }, [q, category, reportId, colour, stockStatus, page]);
+  // Do not auto-search on load — wait for the user to tap Search (avoids slow empty scans).
 
   async function runSearch(e?: React.FormEvent, nextPage = page) {
     e?.preventDefault();
@@ -86,11 +73,6 @@ export function SearchPage() {
     setPage(1);
     void runSearch(undefined, 1);
   }
-
-  useEffect(() => {
-    void runSearch(undefined, 1);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const totalPages = data?.total_pages ?? 1;
   const totalCount = data?.count ?? 0;

@@ -31,11 +31,24 @@ def _load_search_rows(
     design_number: Optional[str],
     size: Optional[str],
     stock_status: Optional[str],
+    query_design_number: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     report_q: dict[str, Any] = {"status": "imported"}
     if effective_report_id:
         report_q["id"] = effective_report_id
-    reports = {int(r["id"]): r for r in db.col("reports").find(report_q)}
+    reports = {
+        int(r["id"]): r
+        for r in db.col("reports").find(
+            report_q,
+            {
+                "id": 1,
+                "filename": 1,
+                "report_date": 1,
+                "supplier_id": 1,
+                "status": 1,
+            },
+        )
+    }
     if not reports:
         return []
 
@@ -51,7 +64,55 @@ def _load_search_rows(
         if not reports:
             return []
 
-    snap_q: dict[str, Any] = {"report_id": {"$in": list(reports.keys())}}
+    # Narrow products first when searching a design number (common path)
+    target_dn = design_number or query_design_number
+    product_q: dict[str, Any] = {}
+    if category:
+        product_q["category"] = category
+    if target_dn:
+        product_q["design_number"] = target_dn
+
+    if product_q:
+        products = {
+            int(p["id"]): p
+            for p in db.col("products").find(
+                product_q,
+                {
+                    "id": 1,
+                    "design_number": 1,
+                    "original_name": 1,
+                    "normalized_name": 1,
+                    "category": 1,
+                },
+            )
+        }
+        if not products:
+            return []
+        variants = {
+            int(v["id"]): v
+            for v in db.col("variants").find(
+                {"product_id": {"$in": list(products.keys())}},
+                {
+                    "id": 1,
+                    "product_id": 1,
+                    "item_code": 1,
+                    "colour": 1,
+                    "size": 1,
+                    "original_variant_name": 1,
+                },
+            )
+        }
+        if not variants:
+            return []
+        snap_q: dict[str, Any] = {
+            "report_id": {"$in": list(reports.keys())},
+            "variant_id": {"$in": list(variants.keys())},
+        }
+    else:
+        snap_q = {"report_id": {"$in": list(reports.keys())}}
+        variants = {}
+        products = {}
+
     if stock_status == "in_stock":
         snap_q["stock_qty"] = {"$gt": LOW_STOCK_THRESHOLD}
     elif stock_status == "low_stock":
@@ -59,14 +120,58 @@ def _load_search_rows(
     elif stock_status == "out_of_stock":
         snap_q["$or"] = [{"stock_qty": {"$lte": 0}}, {"stock_qty": None}]
 
-    snapshots = list(db.col("stock_snapshots").find(snap_q))
+    snap_proj = {
+        "id": 1,
+        "variant_id": 1,
+        "report_id": 1,
+        "stock_qty": 1,
+        "mrp": 1,
+        "purchase_qty": 1,
+        "purchase_rate": 1,
+        "purchase_amount": 1,
+        "difference": 1,
+        "stock_amount": 1,
+        "pdf_page": 1,
+        "original_product_text": 1,
+        "needs_review": 1,
+    }
+    snapshots = list(db.col("stock_snapshots").find(snap_q, snap_proj))
     if not snapshots:
         return []
 
-    variant_ids = list({int(s["variant_id"]) for s in snapshots})
-    variants = {int(v["id"]): v for v in db.col("variants").find({"id": {"$in": variant_ids}})}
-    product_ids = list({int(v["product_id"]) for v in variants.values()})
-    products = {int(p["id"]): p for p in db.col("products").find({"id": {"$in": product_ids}})}
+    if not variants:
+        variant_ids = list({int(s["variant_id"]) for s in snapshots})
+        variants = {
+            int(v["id"]): v
+            for v in db.col("variants").find(
+                {"id": {"$in": variant_ids}},
+                {
+                    "id": 1,
+                    "product_id": 1,
+                    "item_code": 1,
+                    "colour": 1,
+                    "size": 1,
+                    "original_variant_name": 1,
+                },
+            )
+        }
+        product_ids = list({int(v["product_id"]) for v in variants.values()})
+        pq: dict[str, Any] = {"id": {"$in": product_ids}}
+        if category:
+            pq["category"] = category
+        products = {
+            int(p["id"]): p
+            for p in db.col("products").find(
+                pq,
+                {
+                    "id": 1,
+                    "design_number": 1,
+                    "original_name": 1,
+                    "normalized_name": 1,
+                    "category": 1,
+                },
+            )
+        }
 
     rows: list[dict[str, Any]] = []
     for ss in snapshots:
@@ -141,6 +246,13 @@ def search_stock(
     if effective_report_id is None and latest:
         effective_report_id = _latest_report_id()
 
+    # Fast path: exact design-number searches hit a tiny product set
+    query_dn = None
+    if len(query_tokens) == 1 and query_tokens[0].isdigit():
+        query_dn = query_tokens[0]
+    elif design_number:
+        query_dn = design_number
+
     rows = _load_search_rows(
         effective_report_id=effective_report_id,
         category=category,
@@ -148,6 +260,7 @@ def search_stock(
         design_number=design_number,
         size=size,
         stock_status=stock_status,
+        query_design_number=query_dn if not design_number else None,
     )
 
     def design_blob(r: dict) -> str:
