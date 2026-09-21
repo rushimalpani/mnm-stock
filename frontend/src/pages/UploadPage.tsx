@@ -48,6 +48,7 @@ export function UploadPage() {
         </h1>
         <p className="mt-2 text-base text-[var(--muted)] sm:text-lg">
           Choose the supplier stock report PDF from your phone or computer.
+          Large fashion PDFs can take 1–3 minutes on the free server.
         </p>
 
         <div
@@ -69,7 +70,7 @@ export function UploadPage() {
           <p className="hidden font-[family-name:var(--font-display)] text-2xl sm:block">Drop PDF here</p>
           <p className="hidden text-[var(--muted)] sm:mt-2 sm:block">or</p>
           <label className="inline-block w-full max-w-sm cursor-pointer rounded-2xl bg-[var(--accent)] px-6 py-4 text-lg font-semibold text-white active:bg-[var(--accent-2)] sm:mt-4 sm:w-auto sm:px-8 sm:text-xl">
-            {busy ? 'Reading PDF…' : 'Choose PDF file'}
+            {busy ? 'Working… please wait (can take a few minutes)' : 'Choose PDF file'}
             <input
               type="file"
               accept="application/pdf,.pdf"

@@ -132,6 +132,12 @@ export const api = {
     return request<SearchResponse>(`/api/search?${qs.toString()}`);
   },
   uploadPdf: async (file: File) => {
+    // Wake free-tier Render before a long upload (cold start can be ~60s)
+    try {
+      await fetch(`${API_BASE}/api/health`, { method: 'GET' });
+    } catch {
+      /* ignore — upload will surface the real error */
+    }
     const form = new FormData();
     form.append('file', file);
     return request<PreviewResponse>('/api/upload/pdf', { method: 'POST', body: form });

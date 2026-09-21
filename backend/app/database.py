@@ -74,13 +74,23 @@ def col(name: str) -> Collection:
 
 def next_id(sequence: str) -> int:
     """Integer auto-increment compatible with existing API ids."""
+    return next_ids(sequence, 1)[0]
+
+
+def next_ids(sequence: str, count: int) -> list[int]:
+    """Reserve `count` ids in one Atlas round-trip (critical for large PDF imports)."""
+    n = max(0, int(count))
+    if n == 0:
+        return []
     doc = col("counters").find_one_and_update(
         {"_id": sequence},
-        {"$inc": {"seq": 1}},
+        {"$inc": {"seq": n}},
         upsert=True,
         return_document=ReturnDocument.AFTER,
     )
-    return int(doc["seq"])
+    end = int(doc["seq"])
+    start = end - n + 1
+    return list(range(start, end + 1))
 
 
 def ensure_dirs() -> None:

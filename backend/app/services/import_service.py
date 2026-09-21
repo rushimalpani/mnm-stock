@@ -222,19 +222,23 @@ def create_preview(stored_path: Path, original_filename: str) -> dict[str, Any]:
         db.col("reports").insert_one(report_doc)
 
     preview_docs = []
-    for idx, row in enumerate(result.rows):
-        preview_docs.append(
-            {
-                "id": db.next_id("import_previews"),
-                "report_id": report_id,
-                "row_index": idx,
-                "payload_json": json.dumps(row.to_dict()),
-                "needs_review": 1 if row.needs_review else 0,
-                "review_notes": "; ".join(row.review_notes),
-            }
-        )
-    if preview_docs:
-        db.col("import_previews").insert_many(preview_docs)
+    if result.rows:
+        ids = db.next_ids("import_previews", len(result.rows))
+        for idx, (row, pid) in enumerate(zip(result.rows, ids)):
+            preview_docs.append(
+                {
+                    "id": pid,
+                    "report_id": report_id,
+                    "row_index": idx,
+                    "payload_json": json.dumps(row.to_dict()),
+                    "needs_review": 1 if row.needs_review else 0,
+                    "review_notes": "; ".join(row.review_notes),
+                }
+            )
+        # Chunked insert keeps payload under Atlas/document limits
+        chunk = 500
+        for i in range(0, len(preview_docs), chunk):
+            db.col("import_previews").insert_many(preview_docs[i : i + chunk])
 
     # Drop ephemeral upload-cache copies; keep caller temp/sample files
     try:
@@ -321,7 +325,7 @@ def confirm_import(report_id: int, include_review_rows: bool = False) -> dict[st
 
     imported = 0
     skipped = 0
-    snapshot_docs = []
+    pending_rows: list[dict] = []
     for p in previews:
         row = json.loads(p["payload_json"])
         if p.get("needs_review") and not include_review_rows:
@@ -329,47 +333,59 @@ def confirm_import(report_id: int, include_review_rows: bool = False) -> dict[st
             continue
         product_id = _get_or_create_product(row)
         variant_id = _get_or_create_variant(product_id, row)
-        # Unique-ish: skip if same variant+report+page already exists
-        exists = db.col("stock_snapshots").find_one(
-            {
-                "variant_id": variant_id,
-                "report_id": report_id,
-                "pdf_page": row.get("pdf_page"),
-            }
+        pending_rows.append((variant_id, row))
+
+    # Skip rows that already have a snapshot for this report+variant+page
+    existing = {
+        (int(s["variant_id"]), s.get("pdf_page"))
+        for s in db.col("stock_snapshots").find(
+            {"report_id": report_id}, {"variant_id": 1, "pdf_page": 1}
         )
-        if exists:
+    }
+    to_insert = []
+    for variant_id, row in pending_rows:
+        key = (int(variant_id), row.get("pdf_page"))
+        if key in existing:
             imported += 1
             continue
-        snapshot_docs.append(
-            {
-                "id": db.next_id("stock_snapshots"),
-                "variant_id": variant_id,
-                "report_id": report_id,
-                "purchase_qty": row.get("purchase_qty"),
-                "purchase_rate": row.get("purchase_rate"),
-                "purchase_amount": row.get("purchase_amount"),
-                "stock_qty": row.get("stock_qty"),
-                "difference": row.get("difference"),
-                "mrp": row.get("mrp"),
-                "stock_amount": row.get("stock_amount"),
-                "pdf_page": row.get("pdf_page"),
-                "original_product_text": row.get("original_product_text"),
-                "needs_review": 1 if row.get("needs_review") else 0,
-                "review_notes": row.get("review_notes"),
-                "supplier": row.get("supplier") or supplier_name,
-                "category": row.get("category"),
-                "design_number": row.get("design_number"),
-                "design_name": row.get("design_name"),
-                "normalized_name": row.get("normalized_name"),
-                "colour": row.get("colour"),
-                "size": row.get("size"),
-                "item_code": row.get("item_code"),
-            }
-        )
-        imported += 1
+        to_insert.append((variant_id, row))
+
+    snapshot_docs = []
+    if to_insert:
+        ids = db.next_ids("stock_snapshots", len(to_insert))
+        for (variant_id, row), sid in zip(to_insert, ids):
+            snapshot_docs.append(
+                {
+                    "id": sid,
+                    "variant_id": variant_id,
+                    "report_id": report_id,
+                    "purchase_qty": row.get("purchase_qty"),
+                    "purchase_rate": row.get("purchase_rate"),
+                    "purchase_amount": row.get("purchase_amount"),
+                    "stock_qty": row.get("stock_qty"),
+                    "difference": row.get("difference"),
+                    "mrp": row.get("mrp"),
+                    "stock_amount": row.get("stock_amount"),
+                    "pdf_page": row.get("pdf_page"),
+                    "original_product_text": row.get("original_product_text"),
+                    "needs_review": 1 if row.get("needs_review") else 0,
+                    "review_notes": row.get("review_notes"),
+                    "supplier": row.get("supplier") or supplier_name,
+                    "category": row.get("category"),
+                    "design_number": row.get("design_number"),
+                    "design_name": row.get("design_name"),
+                    "normalized_name": row.get("normalized_name"),
+                    "colour": row.get("colour"),
+                    "size": row.get("size"),
+                    "item_code": row.get("item_code"),
+                }
+            )
+            imported += 1
 
     if snapshot_docs:
-        db.col("stock_snapshots").insert_many(snapshot_docs)
+        chunk = 500
+        for i in range(0, len(snapshot_docs), chunk):
+            db.col("stock_snapshots").insert_many(snapshot_docs[i : i + chunk])
 
     db.col("reports").update_one(
         {"id": report_id},
