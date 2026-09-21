@@ -50,7 +50,16 @@ def on_startup() -> None:
 @app.get("/api/health")
 def health():
     """Root also serves health so Render's default HEAD / check does not 404."""
-    return {"status": "ok"}
+    mongo = "unset"
+    if os.environ.get("MONGODB_URI"):
+        try:
+            from app.database import get_client
+
+            get_client().admin.command("ping")
+            mongo = "ok"
+        except Exception as exc:  # noqa: BLE001
+            mongo = f"error:{type(exc).__name__}"
+    return {"status": "ok", "mongo": mongo}
 
 
 @app.get("/api/pdf/{report_id}")
