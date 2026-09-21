@@ -144,14 +144,25 @@ export const api = {
   },
   getPreview: (reportId: number) => request<PreviewResponse>(`/api/upload/preview/${reportId}`),
   confirmImport: (reportId: number, includeReviewRows = false) =>
-    request<{ status: string; imported_rows: number; skipped_review_rows: number }>(
-      `/api/upload/confirm/${reportId}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ include_review_rows: includeReviewRows }),
-      },
-    ),
+    request<{
+      status: string;
+      imported_rows: number;
+      skipped_review_rows: number;
+      message?: string;
+      report_id?: number;
+    }>(`/api/upload/confirm/${reportId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ include_review_rows: includeReviewRows }),
+    }),
+  confirmStatus: (reportId: number) =>
+    request<{
+      status: string;
+      imported_rows: number;
+      skipped_review_rows: number;
+      message?: string | null;
+      report_id: number;
+    }>(`/api/upload/confirm/${reportId}/status`),
   design: (productId: number, reportId?: number | null) =>
     request<Record<string, unknown>>(
       `/api/designs/${productId}${reportId ? `?report_id=${reportId}` : ''}`,

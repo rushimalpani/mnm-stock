@@ -33,7 +33,31 @@ export function UploadPage() {
     setBusyPhase('save');
     setError(null);
     try {
-      const res = await api.confirmImport(preview.report_id, includeReview);
+      let res = await api.confirmImport(preview.report_id, includeReview);
+      // Large reports save in the background — poll until done (avoids Render 502)
+      if (res.status === 'importing') {
+        const started = Date.now();
+        while (Date.now() - started < 10 * 60 * 1000) {
+          await new Promise((r) => setTimeout(r, 2000));
+          const st = await api.confirmStatus(preview.report_id);
+          if (st.status === 'imported') {
+            res = st;
+            break;
+          }
+          if (st.status === 'failed') {
+            throw new Error(st.message || 'Save failed on server');
+          }
+          if (st.status !== 'importing') {
+            // preview again / unexpected — keep waiting a bit
+            if (st.status === 'preview') continue;
+            res = st;
+            break;
+          }
+        }
+        if (res.status === 'importing') {
+          throw new Error('Save is still running. Wait a minute, then search — or tap Save again.');
+        }
+      }
       setConfirmMsg(`Saved ${res.imported_rows} items. You can now search them.`);
       setPreview({ ...preview, status: 'imported' });
     } catch (err) {

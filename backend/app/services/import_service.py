@@ -325,7 +325,12 @@ def get_preview(report_id: int) -> dict[str, Any]:
     }
 
 
-def confirm_import(report_id: int, include_review_rows: bool = False) -> dict[str, Any]:
+def confirm_import(
+    report_id: int,
+    include_review_rows: bool = False,
+    *,
+    resume: bool = False,
+) -> dict[str, Any]:
     report = db.col("reports").find_one({"id": report_id})
     if not report:
         raise ValueError("Report not found")
@@ -337,7 +342,36 @@ def confirm_import(report_id: int, include_review_rows: bool = False) -> dict[st
             "skipped_review_rows": report.get("rows_review") or 0,
             "message": "Already imported",
         }
+    if report["status"] == "importing" and not resume:
+        return {
+            "report_id": report_id,
+            "status": "importing",
+            "imported_rows": 0,
+            "skipped_review_rows": 0,
+            "message": "Save already in progress",
+        }
 
+    if not resume:
+        db.col("reports").update_one(
+            {"id": report_id},
+            {"$set": {"status": "importing"}},
+        )
+
+    try:
+        return _confirm_import_body(report, report_id, include_review_rows)
+    except Exception as exc:
+        db.col("reports").update_one(
+            {"id": report_id},
+            {"$set": {"status": "failed", "notes": f"Save failed: {exc}"}},
+        )
+        raise
+
+
+def _confirm_import_body(
+    report: dict,
+    report_id: int,
+    include_review_rows: bool,
+) -> dict[str, Any]:
     supplier_name = None
     if report.get("supplier_id"):
         s = db.col("suppliers").find_one({"id": report["supplier_id"]})
